@@ -72,6 +72,18 @@ async def async_unload_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> 
     return unload_ok
 
 
+async def async_remove_config_entry_device(
+    hass: HomeAssistant,
+    entry: CasambiConfigEntry,
+    device_entry: dr.DeviceEntry,
+) -> bool:
+    """Allow removal of devices for units no longer in the network."""
+    api = entry.runtime_data
+    current: set[tuple[str, str]] = {(DOMAIN, unit.uuid) for unit in api.get_units()}
+    current.add((DOMAIN, api.casa.networkId))
+    return not any(identifier in current for identifier in device_entry.identifiers)
+
+
 def get_cache_dir(hass: HomeAssistant) -> Path:
     """Return the cache dir that should be used by CasambiBt."""
     conf_path = Path(hass.config.config_dir)
@@ -102,6 +114,7 @@ class CasambiApi:
         self._reconnect_lock = asyncio.Lock()
         self._first_disconnect = True
         self._handlers_registered = False
+        self._unit_snapshot: frozenset[str] | None = None
 
     def _register_bluetooth_callback(self) -> None:
         self._cancel_bluetooth_callback = bluetooth.async_register_callback(
@@ -136,6 +149,7 @@ class CasambiApi:
                     self.address,
                 )
             self._first_disconnect = True
+            self._check_network_changes()
         except BluetoothError as err:
             raise ConfigEntryNotReady("Failed to use bluetooth") from err
         except NetworkNotFoundError as err:
@@ -155,6 +169,25 @@ class CasambiApi:
         # Otherwise we get an immediate callback and attempt two connections at once.
         if not self._cancel_bluetooth_callback:
             self._register_bluetooth_callback()
+
+    @callback
+    def _check_network_changes(self) -> None:
+        """Reload the config entry if units were added or removed.
+
+        The network configuration is re-fetched on every connect, so a
+        reconnect may reveal units that were added or removed via the
+        Casambi app. A reload recreates the entities to match.
+        """
+        snapshot = frozenset(unit.uuid for unit in self.casa.units)
+        if self._unit_snapshot is None:
+            self._unit_snapshot = snapshot
+            return
+        if snapshot != self._unit_snapshot:
+            _LOGGER.info(
+                "Units in the Casambi network %s changed; reloading", self.address
+            )
+            self._unit_snapshot = snapshot
+            self.hass.config_entries.async_schedule_reload(self.conf_entry.entry_id)
 
     @property
     def available(self) -> bool:
