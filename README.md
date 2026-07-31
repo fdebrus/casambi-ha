@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Casambi Bluetooth logo" width="160"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="custom_components/casambi_bt/brand/dark_logo@2x.png">
+    <img src="custom_components/casambi_bt/brand/logo@2x.png" alt="Casambi logo" width="300"/>
+  </picture>
 </p>
 
 # Home Assistant integration for Casambi using Bluetooth

@@ -14,8 +14,11 @@ rules:
       pattern exists to centralize polling, which this integration never does.
       Entities subscribe to per-unit push callbacks instead.
   brands:
-    status: exempt
-    comment: Custom integration, not part of the home-assistant/brands repo.
+    status: done
+    comment: |
+      Ships the official Casambi brand images locally in the brand/ folder
+      (supported since HA 2026.3, which also stopped accepting custom
+      integrations in the home-assistant/brands repo).
   common-modules: done
   config-flow: done
   config-flow-test-coverage: todo
