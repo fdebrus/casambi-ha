@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="Casambi Bluetooth logo" width="160"/>
+</p>
+
 # Home Assistant integration for Casambi using Bluetooth
 
 [![Discord](https://img.shields.io/discord/1186445089317326888)](https://discord.gg/jgZVugfx)
