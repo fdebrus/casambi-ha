@@ -1,13 +1,15 @@
 """Common functionality for entities."""
 
 from abc import ABCMeta
+from collections.abc import Coroutine
 from dataclasses import dataclass
 import logging
-from typing import Final, cast
+from typing import Any, Final, cast
 
 from CasambiBt import Group as CasambiGroup, Scene as CasambiScene, Unit as CasambiUnit
 
 from homeassistant.core import callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry
 from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 
@@ -46,9 +48,19 @@ class CasambiEntity(Entity, metaclass=ABCMeta):
         """Return True if entity is available."""
         return self._api.available
 
+    async def _async_casa_command(self, command: Coroutine[Any, Any, None]) -> None:
+        """Execute a casambi-bt command and raise a HomeAssistantError on failure."""
+        try:
+            await command
+        except Exception as err:
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="command_error",
+            ) from err
+
     @callback
     def _change_callback(self, _unit: CasambiUnit) -> None:
-        self.schedule_update_ha_state(False)
+        self.async_write_ha_state()
 
 
 class CasambiNetworkEntity(CasambiEntity, metaclass=ABCMeta):

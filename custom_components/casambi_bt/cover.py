@@ -14,12 +14,11 @@ from homeassistant.components.cover import (
     CoverEntity,
     CoverEntityFeature,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import CasambiApi
-from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, DOMAIN, entry_option
+from . import CasambiApi, CasambiConfigEntry
+from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -29,19 +28,22 @@ from .entities import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# State is pushed by the Casambi network, no coordinated polling is required.
+PARALLEL_UPDATES = 0
+
 CASA_VERTICAL_MAX: Final = 255
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: CasambiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Create the Casambi cover entities."""
     if not entry_option(config_entry, CONF_VERTICAL_AS_COVER, False):
         return
 
-    casa_api: CasambiApi = hass.data[DOMAIN][config_entry.entry_id]
+    casa_api = config_entry.runtime_data
 
     cover_entities: list[CasambiCover] = [
         CasambiCoverUnit(casa_api, u)
@@ -97,17 +99,21 @@ class CasambiCover(CasambiEntity, CoverEntity, metaclass=ABCMeta):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
-        await self._api.casa.setVertical(self._obj, CASA_VERTICAL_MAX)
+        await self._async_casa_command(
+            self._api.casa.setVertical(self._obj, CASA_VERTICAL_MAX)
+        )
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover."""
-        await self._api.casa.setVertical(self._obj, 0)
+        await self._async_casa_command(self._api.casa.setVertical(self._obj, 0))
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the cover to a specific position (0-100)."""
         position = kwargs[ATTR_POSITION]
-        await self._api.casa.setVertical(
-            self._obj, round(position * CASA_VERTICAL_MAX / 100)
+        await self._async_casa_command(
+            self._api.casa.setVertical(
+                self._obj, round(position * CASA_VERTICAL_MAX / 100)
+            )
         )
 
 

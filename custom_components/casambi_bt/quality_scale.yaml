@@ -1,0 +1,93 @@
+# Status of this integration against the Home Assistant integration quality scale.
+# See https://developers.home-assistant.io/docs/core/integration-quality-scale/
+rules:
+  # Bronze
+  action-setup:
+    status: exempt
+    comment: The integration does not register custom service actions.
+  appropriate-polling:
+    status: done
+    comment: |
+      No polling at all. The integration is local_push: the casambi-bt library
+      maintains a BLE connection and pushes unit state changes via callbacks.
+      This is also why no DataUpdateCoordinator is used - the coordinator
+      pattern exists to centralize polling, which this integration never does.
+      Entities subscribe to per-unit push callbacks instead.
+  brands:
+    status: exempt
+    comment: Custom integration, not part of the home-assistant/brands repo.
+  common-modules: done
+  config-flow: done
+  config-flow-test-coverage: todo
+  dependency-transparency: done
+  docs-actions:
+    status: exempt
+    comment: No custom actions.
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions: todo
+  entity-event-setup: done
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure: done
+  test-before-setup: done
+  unique-config-entry: done
+
+  # Silver
+  action-exceptions: done
+  config-entry-unloading: done
+  docs-configuration-parameters: done
+  docs-installation-parameters: done
+  entity-unavailable: done
+  integration-owner: done
+  log-when-unavailable: done
+  parallel-updates: done
+  reauthentication-flow: done
+  test-coverage: todo
+
+  # Gold
+  devices: done
+  diagnostics: done
+  discovery: done
+  discovery-update-info:
+    status: todo
+    comment: Bluetooth discovery does not currently update the stored address.
+  docs-data-update: todo
+  docs-examples: todo
+  docs-known-limitations: done
+  docs-supported-devices: todo
+  docs-supported-functions: done
+  docs-troubleshooting: done
+  docs-use-cases: done
+  dynamic-devices:
+    status: todo
+    comment: |
+      Units added to the network after setup require a reload of the config
+      entry to appear.
+  entity-category: done
+  entity-device-class: done
+  entity-disabled-by-default:
+    status: exempt
+    comment: No noisy or rarely used entities are created.
+  entity-translations: done
+  exception-translations: done
+  icon-translations: done
+  reconfiguration-flow: done
+  repair-issues:
+    status: exempt
+    comment: No repairable situations beyond reauth, which is implemented.
+  stale-devices:
+    status: todo
+    comment: |
+      Units removed from the network are not removed from the device registry
+      automatically.
+
+  # Platinum
+  async-dependency: done
+  inject-websession:
+    status: done
+    comment: The httpx client is injected via homeassistant.helpers.httpx_client.
+  strict-typing:
+    status: done
+    comment: casambi-bt ships py.typed; the integration is fully annotated.

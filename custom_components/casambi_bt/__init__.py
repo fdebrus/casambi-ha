@@ -26,12 +26,14 @@ from .const import DOMAIN, PLATFORMS
 
 _LOGGER: Final = logging.getLogger(__name__)
 
+type CasambiConfigEntry = ConfigEntry[CasambiApi]
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+
+async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> bool:
     """Set up Casambi Bluetooth from a config entry."""
     api = CasambiApi(hass, entry, entry.data[CONF_ADDRESS], entry.data[CONF_PASSWORD])
     await api.connect()
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = api
+    entry.runtime_data = api
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -40,20 +42,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def _async_update_listener(
+    hass: HomeAssistant, entry: CasambiConfigEntry
+) -> None:
     """Reload the config entry when options change."""
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
-    casa_api: CasambiApi = hass.data[DOMAIN][entry.entry_id]
-    await casa_api.disconnect()
-
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id)
+    await entry.runtime_data.disconnect()
 
     return unload_ok
 
@@ -70,7 +70,7 @@ class CasambiApi:
     def __init__(
         self,
         hass: HomeAssistant,
-        conf_entry: ConfigEntry,
+        conf_entry: CasambiConfigEntry,
         address: str,
         password: str,
     ) -> None:
@@ -108,6 +108,11 @@ class CasambiApi:
             self.casa.registerUnitChangedHandler(self._unit_changed_handler)
 
             await self.casa.connect(device, self.password)
+            if not self._first_disconnect:
+                _LOGGER.info(
+                    "Connection to the Casambi network %s was re-established",
+                    self.address,
+                )
             self._first_disconnect = True
         except BluetoothError as err:
             raise ConfigEntryNotReady("Failed to use bluetooth") from err
@@ -178,6 +183,11 @@ class CasambiApi:
     def _casa_disconnect(self) -> None:
         if self._first_disconnect:
             self._first_disconnect = False
+            _LOGGER.info(
+                "Connection to the Casambi network %s was lost; "
+                "reconnecting in the background",
+                self.address,
+            )
             self.conf_entry.async_create_background_task(
                 self.hass, self._delayed_reconnect(), "Delayed reconnect"
             )

@@ -9,16 +9,15 @@ from typing import cast
 from CasambiBt import Group, Unit, UnitControlType
 
 from homeassistant.components.number import (
-    NumberDeviceClass,
     NumberEntity,
     NumberEntityDescription,
+    NumberMode,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import CasambiApi
-from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, DOMAIN, entry_option
+from . import CasambiApi, CasambiConfigEntry
+from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -28,10 +27,13 @@ from .entities import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# State is pushed by the Casambi network, no coordinated polling is required.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: CasambiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Create the Casambi vertical entity."""
@@ -39,7 +41,7 @@ async def async_setup_entry(
     if entry_option(config_entry, CONF_VERTICAL_AS_COVER, False):
         return
 
-    casa_api: CasambiApi = hass.data[DOMAIN][config_entry.entry_id]
+    casa_api = config_entry.runtime_data
 
     light_entities: list[CasambiVerticalNumber] = [
         CasambiVerticalNumberUnit(casa_api, u)
@@ -78,7 +80,7 @@ class CasambiVerticalNumber(CasambiEntity, NumberEntity, metaclass=ABCMeta):
     ) -> None:
         """Initialize a Casambi vertical entity base class."""
 
-        self._attr_device_class = NumberDeviceClass.ILLUMINANCE
+        self._attr_mode = NumberMode.SLIDER
         self._attr_native_min_value = 0
         self._attr_native_max_value = 255
 
@@ -87,7 +89,9 @@ class CasambiVerticalNumber(CasambiEntity, NumberEntity, metaclass=ABCMeta):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set the vertical value."""
-        await self._api.casa.setVertical(self._obj, int(value))
+        await self._async_casa_command(
+            self._api.casa.setVertical(self._obj, int(value))
+        )
 
 
 class CasambiVerticalNumberUnit(CasambiVerticalNumber, CasambiUnitEntity):
@@ -96,7 +100,9 @@ class CasambiVerticalNumberUnit(CasambiVerticalNumber, CasambiUnitEntity):
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a Casambi vertical entity."""
 
-        desc = TypedNumberEntityDescription(key=unit.uuid, entity_type="vertical")
+        desc = TypedNumberEntityDescription(
+            key=unit.uuid, entity_type="vertical", translation_key="vertical"
+        )
 
         self._obj: Unit
         super().__init__(api, desc, unit)

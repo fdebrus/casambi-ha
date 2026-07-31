@@ -2,6 +2,14 @@
 
 This document explain the recommended development workflow as well as a possible setup for development. This workflow includes both the integration (this repository) as well as the interfacing library [casambi-bt](https://github.com/lkempf/casambi-bt).
 
+## Architecture
+
+The integration is `local_push`: the `casambi-bt` library keeps a BLE connection to the network open and pushes unit state changes via callbacks. `CasambiApi` (in `__init__.py`) owns the connection, handles automatic reconnects, and fans out per-unit change callbacks that entities subscribe to in `async_added_to_hass`.
+
+**Why is there no `DataUpdateCoordinator`?** The coordinator pattern exists to centralize *polling* so that many entities share one fetch cycle. This integration never polls — state arrives as push callbacks from the BLE mesh — so a coordinator would add indirection without benefit. `CasambiApi` already fulfils the coordinator's other role (a single shared connection/state owner). All entity platforms therefore declare `PARALLEL_UPDATES = 0` and `should_poll = False`.
+
+The integration status against the Home Assistant [integration quality scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/) is tracked in `custom_components/casambi_bt/quality_scale.yaml`.
+
 ## Workflow
 
 This repository uses two important branches `main` and `dev`. Everything happening in `main` should be tested and planned for the next release. Changes that haven't been tested properly should only be applied to `dev`.

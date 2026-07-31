@@ -6,6 +6,8 @@
             "cannot_connect": "Failed to connect",
             "invalid_auth": "Invalid authentication",
             "reauth_successful": "Re-authentication was successful",
+            "reconfigure_successful": "Re-configuration was successful",
+            "wrong_network": "The address does not match the configured Casambi network.",
             "unknown": "Unexpected error"
         },
         "error": {
@@ -25,6 +27,15 @@
                 "title": "Configure your Casambi network",
                 "description": "Find the bluetooth MAC address (Network ID) in the luminair details of your casambi app."
             },
+            "reconfigure": {
+                "data": {
+                    "address": "Bluetooth MAC address",
+                    "import_groups": "Import groups",
+                    "password": "Password",
+                    "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)"
+                },
+                "title": "Reconfigure your Casambi network"
+            },
             "reauth_confirm": {
                 "data": {
                     "password": "Password"
@@ -42,6 +53,23 @@
                 },
                 "title": "Casambi options"
             }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "status": {
+                "name": "Status"
+            }
+        },
+        "number": {
+            "vertical": {
+                "name": "Vertical"
+            }
+        }
+    },
+    "exceptions": {
+        "command_error": {
+            "message": "Failed to send the command to the Casambi network."
         }
     }
 }
