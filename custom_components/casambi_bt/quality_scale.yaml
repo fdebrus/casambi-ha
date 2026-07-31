@@ -28,7 +28,7 @@ rules:
     comment: No custom actions.
   docs-high-level-description: done
   docs-installation-instructions: done
-  docs-removal-instructions: todo
+  docs-removal-instructions: done
   entity-event-setup: done
   entity-unique-id: done
   has-entity-name: done
@@ -58,20 +58,25 @@ rules:
   diagnostics: done
   discovery: done
   discovery-update-info:
-    status: todo
-    comment: Bluetooth discovery does not currently update the stored address.
-  docs-data-update: todo
-  docs-examples: todo
+    status: exempt
+    comment: |
+      The bluetooth address is the identity of a Casambi network and is used
+      as the config entry unique id; a different address is a different
+      network, so there is no address to update.
+  docs-data-update: done
+  docs-examples: done
   docs-known-limitations: done
-  docs-supported-devices: todo
+  docs-supported-devices: done
   docs-supported-functions: done
   docs-troubleshooting: done
   docs-use-cases: done
   dynamic-devices:
-    status: todo
+    status: done
     comment: |
-      Units added to the network after setup require a reload of the config
-      entry to appear.
+      The network configuration is re-fetched on reconnect; when the unit
+      list changed, the config entry reloads itself so entities match.
+      Wall switch button entities are additionally discovered dynamically
+      at runtime.
   entity-category: done
   entity-device-class: done
   entity-disabled-by-default:
@@ -85,10 +90,11 @@ rules:
     status: exempt
     comment: No repairable situations beyond reauth, which is implemented.
   stale-devices:
-    status: todo
+    status: done
     comment: |
-      Units removed from the network are not removed from the device registry
-      automatically.
+      When the unit list changes the entry reloads, so stale entities stop
+      being provided; async_remove_config_entry_device allows deleting the
+      leftover devices from the UI.
 
   # Platinum
   async-dependency: done

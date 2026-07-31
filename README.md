@@ -63,10 +63,60 @@ Button presses on Casambi wall switches (e.g. Xpress) are exposed in two ways:
 Casambi-based pergolas such as the Winsol So! expose their louvre angle through the Casambi *vertical* control. By default this shows up in HA as a number entity. Enable **"Expose vertical controls as covers"** during setup (or later via the integration's *Configure* button) to get proper `cover` entities instead, with open/close buttons and position control (0 = closed, 100 = fully open). Cover entities work with HA dashboards, voice assistants, and automations much better than a raw number slider.
 
 Not supported yet:
-- Switches
 - Sensors
-- Additional control types (e.g. temperature, ...)
+- Additional control types (e.g. slider, ...)
 - Networks with classic firmware
+
+## How data updates work
+
+The integration connects to the Casambi network directly over Bluetooth and receives state changes as push updates — there is no polling and no cloud dependency during operation (the cloud is contacted once during setup to fetch the network configuration, which is then cached). If the Bluetooth connection drops, the integration reconnects automatically as soon as the network is in range again; a `Status` diagnostic sensor shows the connection state. If units were added or removed via the Casambi app in the meantime, the integration reloads itself so the entities match the network.
+
+## Supported devices
+
+Any unit that works with the Casambi app on a network with *Evolution* firmware should work, including:
+
+- Casambi-ready luminaires and drivers (dimmer, RGB(W), tunable white, XY color)
+- Casambi-based pergolas with louvres (e.g. Winsol So!) via the vertical control
+- Casambi wall switches (e.g. Xpress) as event entities
+
+## Example automations
+
+Close the louvres when a wall switch button is held:
+
+```yaml
+triggers:
+  - trigger: event
+    event_type: casambi_bt_button_event
+    event_data:
+      button: 2
+      event_type: hold
+actions:
+  - action: cover.close_cover
+    target:
+      entity_id: cover.pergola
+```
+
+Open the louvres to 40% every morning:
+
+```yaml
+triggers:
+  - trigger: time
+    at: "08:00:00"
+actions:
+  - action: cover.set_cover_position
+    target:
+      entity_id: cover.pergola
+    data:
+      position: 40
+```
+
+## Removing the integration
+
+1. Go to **Settings → Devices & services → Casambi Bluetooth**.
+2. Select the network entry, open the three-dot menu, and choose **Delete**.
+3. If installed via HACS, remove the repository from HACS afterwards.
+
+The cached network configuration in `.storage/casambi_bt` is kept so that re-adding the network is fast; it can be deleted manually if desired. Devices for units that were removed from the Casambi network can be deleted from the device page in HA.
 
 ## Reporting issues
 
