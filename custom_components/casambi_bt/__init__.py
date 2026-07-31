@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Final
 
 from CasambiBt import Casambi, Group, Scene, Unit, UnitControlType
+from CasambiBt._switch import SwitchEvent
 from CasambiBt.errors import AuthenticationError, BluetoothError, NetworkNotFoundError
 
 from homeassistant.components import bluetooth
@@ -23,7 +24,7 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.httpx_client import get_async_client
 
-from .const import DOMAIN, PLATFORMS
+from .const import DOMAIN, EVENT_BUTTON, PLATFORMS
 
 _LOGGER: Final = logging.getLogger(__name__)
 
@@ -96,9 +97,11 @@ class CasambiApi:
         self.casa: Casambi = Casambi(get_async_client(hass), get_cache_dir(hass))
 
         self._callback_map: dict[int, list[Callable[[Unit], None]]] = {}
+        self._switch_event_callbacks: list[Callable[[SwitchEvent], None]] = []
         self._cancel_bluetooth_callback: Callable[[], None] | None = None
         self._reconnect_lock = asyncio.Lock()
         self._first_disconnect = True
+        self._handlers_registered = False
 
     def _register_bluetooth_callback(self) -> None:
         self._cancel_bluetooth_callback = bluetooth.async_register_callback(
@@ -117,8 +120,14 @@ class CasambiApi:
             if not device:
                 raise NetworkNotFoundError  # noqa: TRY301
 
-            self.casa.registerDisconnectCallback(self._casa_disconnect)
-            self.casa.registerUnitChangedHandler(self._unit_changed_handler)
+            # Register the handlers only once. The Casambi object keeps them
+            # across reconnects, so registering on every connect would make
+            # each handler fire multiple times after a reconnect.
+            if not self._handlers_registered:
+                self.casa.registerDisconnectCallback(self._casa_disconnect)
+                self.casa.registerUnitChangedHandler(self._unit_changed_handler)
+                self.casa.registerSwitchEventHandler(self._switch_event_handler)
+                self._handlers_registered = True
 
             await self.casa.connect(device, self.password)
             if not self._first_disconnect:
@@ -184,13 +193,17 @@ class CasambiApi:
 
             # This needs to happen before we disconnect.
             # We don't want to be informed about disconnects initiated by us.
-            self.casa.unregisterDisconnectCallback(self._casa_disconnect)
+            if self._handlers_registered:
+                self.casa.unregisterDisconnectCallback(self._casa_disconnect)
 
             try:
                 await self.casa.disconnect()
             except Exception:
                 _LOGGER.exception("Error during disconnect.")
-            self.casa.unregisterUnitChangedHandler(self._unit_changed_handler)
+            if self._handlers_registered:
+                self.casa.unregisterUnitChangedHandler(self._unit_changed_handler)
+                self.casa.unregisterSwitchEventHandler(self._switch_event_handler)
+                self._handlers_registered = False
 
     @callback
     def _casa_disconnect(self) -> None:
@@ -258,12 +271,40 @@ class CasambiApi:
         """
         self._callback_map[unit.deviceId].remove(c)
 
+    def register_switch_events(self, c: Callable[[SwitchEvent], None]) -> None:
+        """Register a callback for switch (wall switch button) events."""
+        self._switch_event_callbacks.append(c)
+
+    def unregister_switch_events(self, c: Callable[[SwitchEvent], None]) -> None:
+        """Unregister a callback for switch events."""
+        self._switch_event_callbacks.remove(c)
+
     @callback
     def _unit_changed_handler(self, unit: Unit) -> None:
         if unit.deviceId not in self._callback_map:
             return
         for c in self._callback_map[unit.deviceId]:
             c(unit)
+
+    @callback
+    def _switch_event_handler(self, event: SwitchEvent) -> None:
+        _LOGGER.debug(
+            "Switch event: unit %i button %i %s",
+            event.unit_id,
+            event.button,
+            event.event.name,
+        )
+        self.hass.bus.async_fire(
+            EVENT_BUTTON,
+            {
+                "network_id": self.casa.networkId,
+                "unit_id": event.unit_id,
+                "button": event.button,
+                "event_type": event.event.name.lower(),
+            },
+        )
+        for c in self._switch_event_callbacks:
+            c(event)
 
     @callback
     def _bluetooth_callback(

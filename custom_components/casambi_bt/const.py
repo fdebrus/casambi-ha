@@ -10,6 +10,7 @@ DOMAIN: Final = "casambi_bt"
 PLATFORMS = [
     Platform.BINARY_SENSOR,
     Platform.COVER,
+    Platform.EVENT,
     Platform.LIGHT,
     Platform.SCENE,
     Platform.NUMBER,
@@ -17,6 +18,8 @@ PLATFORMS = [
 
 CONF_IMPORT_GROUPS: Final = "import_groups"
 CONF_VERTICAL_AS_COVER: Final = "vertical_as_cover"
+
+EVENT_BUTTON: Final = f"{DOMAIN}_button_event"
 
 
 def entry_option(entry: ConfigEntry, key: str, default: Any) -> Any:

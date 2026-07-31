@@ -61,6 +61,11 @@
                 "name": "Status"
             }
         },
+        "event": {
+            "button": {
+                "name": "Taste {button}"
+            }
+        },
         "number": {
             "vertical": {
                 "name": "Vertikal"

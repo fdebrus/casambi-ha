@@ -54,6 +54,11 @@
                 "name": "Status"
             }
         },
+        "event": {
+            "button": {
+                "name": "Knop {button}"
+            }
+        },
         "number": {
             "vertical": {
                 "name": "Verticaal"
