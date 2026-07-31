@@ -6,7 +6,8 @@
         "data": {
           "address": "Address (Casambi NetworkID)",
           "password": "[%key:common::config_flow::data::password%]",
-          "import_groups": "Import groups?"
+          "import_groups": "Import groups?",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
         }
       },
       "reauth_confirm": {
@@ -28,6 +29,17 @@
       "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Casambi options",
+        "data": {
+          "import_groups": "Import groups?",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
+        }
+      }
     }
   }
 }

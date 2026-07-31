@@ -18,7 +18,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi
-from .const import CONF_IMPORT_GROUPS, DOMAIN
+from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, DOMAIN, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -35,6 +35,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Create the Casambi vertical entity."""
+    # The vertical control is exposed as a cover instead.
+    if entry_option(config_entry, CONF_VERTICAL_AS_COVER, False):
+        return
+
     casa_api: CasambiApi = hass.data[DOMAIN][config_entry.entry_id]
 
     light_entities: list[CasambiVerticalNumber] = [
@@ -43,7 +47,7 @@ async def async_setup_entry(
     ]
 
     group_entities: list[CasambiVerticalNumber] = []
-    if config_entry.data[CONF_IMPORT_GROUPS]:
+    if entry_option(config_entry, CONF_IMPORT_GROUPS, True):
         for g in casa_api.get_groups():
             has_vert = False
             for u in g.units:
@@ -67,7 +71,8 @@ class CasambiVerticalNumber(CasambiEntity, NumberEntity, metaclass=ABCMeta):
     """
 
     def __init__(
-        self, api: CasambiApi,
+        self,
+        api: CasambiApi,
         description: TypedNumberEntityDescription,
         obj: Group | Unit,
     ) -> None:
@@ -123,7 +128,8 @@ class CasambiVerticalNumberGroup(CasambiVerticalNumber, CasambiNetworkGroup):
         """Get the average vertical value of the group."""
         group = cast("Group", self._obj)
         values = [
-            float(unit.state.vertical) for unit in group.units
+            float(unit.state.vertical)
+            for unit in group.units
             if unit.state is not None and unit.state.vertical is not None
         ]
         if values:
