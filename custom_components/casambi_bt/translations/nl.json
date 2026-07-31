@@ -6,6 +6,8 @@
             "cannot_connect": "Kon geen verbinding maken",
             "invalid_auth": "Foutieve authenticatie",
             "reauth_successful": "Her-authenticatie was succesvol",
+            "reconfigure_successful": "Herconfiguratie was succesvol",
+            "wrong_network": "Het adres hoort niet bij het geconfigureerde Casambi netwerk.",
             "unknown": "Onverwachte fout"
         },
         "error": {
@@ -23,6 +25,15 @@
                     "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?"
                 },
                 "title": "Configureer uw Casambi netwerk"
+            },
+            "reconfigure": {
+                "data": {
+                    "address": "Adres (Casambi NetworkID)",
+                    "import_groups": "Importeer groupen?",
+                    "password": "Wachtwoord",
+                    "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?"
+                },
+                "title": "Herconfigureer uw Casambi netwerk"
             }
         }
     },
@@ -35,6 +46,23 @@
                 },
                 "title": "Casambi opties"
             }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "status": {
+                "name": "Status"
+            }
+        },
+        "number": {
+            "vertical": {
+                "name": "Verticaal"
+            }
+        }
+    },
+    "exceptions": {
+        "command_error": {
+            "message": "Het commando kon niet naar het Casambi netwerk worden verstuurd."
         }
     }
 }

@@ -10,6 +10,15 @@
           "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
         }
       },
+      "reconfigure": {
+        "title": "Reconfigure your Casambi network",
+        "data": {
+          "address": "Address (Casambi NetworkID)",
+          "password": "[%key:common::config_flow::data::password%]",
+          "import_groups": "Import groups?",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
+        }
+      },
       "reauth_confirm": {
         "description": "Please verify your network password.",
         "data": {
@@ -27,6 +36,8 @@
       "bluetooth_error": "Bluetooth doesn't seem to work properly.",
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
       "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+      "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
+      "wrong_network": "The address does not match the configured Casambi network.",
       "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]"
     }
@@ -40,6 +51,23 @@
           "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
         }
       }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "status": {
+        "name": "Status"
+      }
+    },
+    "number": {
+      "vertical": {
+        "name": "Vertical"
+      }
+    }
+  },
+  "exceptions": {
+    "command_error": {
+      "message": "Failed to send the command to the Casambi network."
     }
   }
 }

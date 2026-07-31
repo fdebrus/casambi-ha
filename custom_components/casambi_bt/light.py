@@ -19,12 +19,11 @@ from homeassistant.components.light import (
     LightEntity,
     LightEntityFeature,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import CasambiApi
-from .const import CONF_IMPORT_GROUPS, DOMAIN, entry_option
+from . import CasambiApi, CasambiConfigEntry
+from .const import CONF_IMPORT_GROUPS, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -42,14 +41,17 @@ CASA_LIGHT_CTRL_TYPES: Final[list[UnitControlType]] = [
 
 _LOGGER = logging.getLogger(__name__)
 
+# State is pushed by the Casambi network, no coordinated polling is required.
+PARALLEL_UPDATES = 0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: ConfigEntry,
+    config_entry: CasambiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Create the Casambi light entities."""
-    casa_api: CasambiApi = hass.data[DOMAIN][config_entry.entry_id]
+    casa_api = config_entry.runtime_data
 
     light_entities: list[CasambiLight] = [
         CasambiLightUnit(casa_api, u) for u in casa_api.get_units(CASA_LIGHT_CTRL_TYPES)
@@ -122,7 +124,7 @@ class CasambiLight(CasambiEntity, LightEntity, metaclass=ABCMeta):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the entity of."""
-        await self._api.casa.setLevel(self._obj, 0)
+        await self._async_casa_command(self._api.casa.setLevel(self._obj, 0))
 
 
 class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
@@ -223,9 +225,9 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
             set_state = True
 
         if set_state:
-            await self._api.casa.setUnitState(unit, state)
+            await self._async_casa_command(self._api.casa.setUnitState(unit, state))
         else:
-            await self._api.casa.turnOn(self._obj)
+            await self._async_casa_command(self._api.casa.turnOn(self._obj))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the unit."""
@@ -233,8 +235,10 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
         # SetLevel doesn't seem to work for unknown reasons.
         if self.color_mode == ColorMode.ONOFF:
             unit = cast("Unit", self._obj)
-            await self._api.casa._send(  # noqa: SLF001
-                unit, bytes(unit.unitType.stateLength), _operation.OpCode.SetState
+            await self._async_casa_command(
+                self._api.casa._send(  # noqa: SLF001
+                    unit, bytes(unit.unitType.stateLength), _operation.OpCode.SetState
+                )
             )
         else:
             await super().async_turn_off(**kwargs)
@@ -331,21 +335,27 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
         """Turn on all units in the group."""
         was_set = False
         if ATTR_BRIGHTNESS in kwargs:
-            await self._api.casa.setLevel(self._obj, kwargs[ATTR_BRIGHTNESS])
+            await self._async_casa_command(
+                self._api.casa.setLevel(self._obj, kwargs[ATTR_BRIGHTNESS])
+            )
             was_set = True
         if ATTR_RGB_COLOR in kwargs:
-            await self._api.casa.setColor(self._obj, kwargs[ATTR_RGB_COLOR])
+            await self._async_casa_command(
+                self._api.casa.setColor(self._obj, kwargs[ATTR_RGB_COLOR])
+            )
             was_set = True
         elif ATTR_RGBW_COLOR in kwargs:
             rgb, w = kwargs[ATTR_RGBW_COLOR][:3], kwargs[ATTR_RGBW_COLOR][3]
-            await self._api.casa.setColor(self._obj, rgb)
-            await self._api.casa.setWhite(self._obj, w)
+            await self._async_casa_command(self._api.casa.setColor(self._obj, rgb))
+            await self._async_casa_command(self._api.casa.setWhite(self._obj, w))
             was_set = True
 
         if not was_set:
-            await self._api.casa.turnOn(self._obj)
+            await self._async_casa_command(self._api.casa.turnOn(self._obj))
         elif ATTR_BRIGHTNESS not in kwargs:
             # Sync brightness for group so that everything turns on.
             # This might be a bit confusing because the rest isn't synced.
             if self.brightness is not None:
-                await self._api.casa.setLevel(self._obj, self.brightness)
+                await self._async_casa_command(
+                    self._api.casa.setLevel(self._obj, self.brightness)
+                )

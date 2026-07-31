@@ -214,6 +214,56 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle reconfiguration of an existing entry."""
+        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
+        assert entry is not None
+
+        if user_input:
+            errors = {}
+
+            user_input[CONF_ADDRESS] = format_mac(user_input[CONF_ADDRESS]).upper()
+
+            if len(user_input[CONF_ADDRESS]) == 17:
+                try:
+                    info = await _validate_input(self.hass, user_input)
+                except NetworkNotFoundError:
+                    errors["base"] = "cannot_connect"
+                except AuthenticationError:
+                    errors["base"] = "invalid_auth"
+                except Exception:  # pylint: disable=broad-except
+                    _LOGGER.exception("Unexpected exception")
+                    errors["base"] = "unknown"
+                else:
+                    if info["id"] != entry.unique_id:
+                        return self.async_abort(reason="wrong_network")
+                    self.hass.config_entries.async_update_entry(
+                        entry,
+                        title=info["title"],
+                        data={**entry.data, **user_input},
+                    )
+                    await self.hass.config_entries.async_reload(entry.entry_id)
+                    return self.async_abort(reason="reconfigure_successful")
+            else:
+                errors["base"] = "invalid_address"
+
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=self.add_suggested_values_to_schema(
+                    USER_SCHEMA, user_input
+                ),
+                errors=errors,
+            )
+
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(
+                USER_SCHEMA, dict(entry.data)
+            ),
+        )
+
     async def async_step_reauth(self, _entry_data: Mapping[str, Any]) -> FlowResult:
         """Handle re-authentication with Casambi."""
         self.entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])

@@ -7,6 +7,8 @@
             "invalid_address": "Die Bluetooth MAC Adresse des Netzwerks ist ungültig.",
             "invalid_auth": "Anmeldung ungültig",
             "reauth_successful": "Neuanmeldung war erfolgreich",
+            "reconfigure_successful": "Neukonfiguration war erfolgreich",
+            "wrong_network": "Die Adresse gehört nicht zum konfigurierten Casambi Netzwerk.",
             "unknown": "Unerwarteter Fehler"
         },
         "error": {
@@ -25,6 +27,15 @@
                 "title": "Casambi Netzwerk einrichten",
                 "description": "Die Bluetooth MAC Adresse (Netzwerk ID) findest du in den Details deiner Lampen in der Casambi App."
             },
+            "reconfigure": {
+                "data": {
+                    "address": "Bluetooth MAC Adresse",
+                    "import_groups": "Gruppen importieren",
+                    "password": "Passwort",
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
+                },
+                "title": "Casambi Netzwerk neu konfigurieren"
+            },
             "reauth_confirm": {
                 "data": {
                     "password": "Passwort"
@@ -42,6 +53,23 @@
                 },
                 "title": "Casambi Optionen"
             }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "status": {
+                "name": "Status"
+            }
+        },
+        "number": {
+            "vertical": {
+                "name": "Vertikal"
+            }
+        }
+    },
+    "exceptions": {
+        "command_error": {
+            "message": "Der Befehl konnte nicht an das Casambi Netzwerk gesendet werden."
         }
     }
 }
