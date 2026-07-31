@@ -41,6 +41,7 @@ Functionality exposed to HA:
 - Light groups
 - Scenes
 - Covers (units with a vertical control, e.g. pergola louvres — see below)
+- Wall switch buttons (see below)
 
 Supported control types:
 - Dimmer
@@ -49,6 +50,13 @@ Supported control types:
 - OnOff
 - Temperature (Only for units since there are some open problems for groups.)
 - Vertical (as a number entity, or optionally as a cover entity)
+
+### Wall switches
+
+Button presses on Casambi wall switches (e.g. Xpress) are exposed in two ways:
+
+- **Event entities**: an `event` entity is created automatically the first time a button is used, named after the button number. Event types: `press`, `release`, `hold`, `release_after_hold`.
+- **Bus events**: every button action also fires a `casambi_bt_button_event` on the Home Assistant event bus with `network_id`, `unit_id`, `button`, and `event_type` — usable directly in automation event triggers.
 
 ### Pergola louvres (e.g. Winsol So!)
 
