@@ -16,9 +16,9 @@ from homeassistant.components.bluetooth import (
     async_scanner_count,
 )
 from homeassistant.components.bluetooth.models import BluetoothServiceInfoBleak
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.httpx_client import get_async_client
@@ -79,7 +79,7 @@ class OptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Manage the options."""
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
@@ -116,7 +116,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_create_casa_entry(
         self, title: str, id: str, data: dict[str, Any]
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         existing_entry = await self.async_set_unique_id(id)
 
         if existing_entry:
@@ -136,7 +136,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_bluetooth_error(
         self, _user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle bluetooth errors.
 
         The config flow can't proceed if there is a bluetooth error so this is the last step.
@@ -145,7 +145,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle bluetooth discovery."""
         self.discovery_info = discovery_info
 
@@ -167,7 +167,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle entry of network information and attempt to connect."""
 
         suggested_input = {}
@@ -216,7 +216,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Handle reconfiguration of an existing entry."""
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         assert entry is not None
@@ -264,14 +264,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             ),
         )
 
-    async def async_step_reauth(self, _entry_data: Mapping[str, Any]) -> FlowResult:
+    async def async_step_reauth(
+        self, _entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
         """Handle re-authentication with Casambi."""
         self.entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
         self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+    ) -> ConfigFlowResult:
         """Confirm re-authentication with Casambi."""
         errors: dict[str, str] = {}
         assert self.entry is not None

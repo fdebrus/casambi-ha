@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABCMeta
 import logging
-from typing import Any, Final, cast
+from typing import Any, Final
 
 from CasambiBt import Group, Unit, UnitControlType
 
@@ -131,7 +131,7 @@ class CasambiCoverUnit(CasambiCover, CasambiUnitEntity):
     @property
     def current_cover_position(self) -> int | None:
         """Return the current position of the cover (0-100)."""
-        unit = cast("Unit", self._obj)
+        unit = self._obj
         if unit.state is not None and unit.state.vertical is not None:
             return round(unit.state.vertical * 100 / CASA_VERTICAL_MAX)
         return None

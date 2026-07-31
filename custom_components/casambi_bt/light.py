@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABCMeta
 from copy import copy
 import logging
-from typing import Any, Final, cast
+from typing import Any, Final
 
 from CasambiBt import ColorSource, Group, Unit, UnitControlType, UnitState, _operation
 
@@ -83,8 +83,8 @@ class CasambiLight(CasambiEntity, LightEntity, metaclass=ABCMeta):
         self._obj: Group | Unit
         super().__init__(api, description, obj)
 
-    def _capabilities_helper(self, unit: Unit) -> set[str]:
-        supported: set[str] = set()
+    def _capabilities_helper(self, unit: Unit) -> set[ColorMode]:
+        supported: set[ColorMode] = set()
         unit_modes = [uc.type for uc in unit.unitType.controls]
 
         if UnitControlType.RGB in unit_modes and UnitControlType.WHITE in unit_modes:
@@ -106,7 +106,7 @@ class CasambiLight(CasambiEntity, LightEntity, metaclass=ABCMeta):
 
         return supported
 
-    def _mode_helper(self, modes: set[ColorMode] | set[str] | None) -> str:
+    def _mode_helper(self, modes: set[ColorMode] | set[str] | None) -> ColorMode:
         if modes:
             if ColorMode.RGBW in modes:
                 return ColorMode.RGBW
@@ -152,7 +152,7 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
     @property
     def brightness(self) -> int | None:
         """Return the brightness of the unit."""
-        unit = cast("Unit", self._obj)
+        unit = self._obj
         if unit.state is not None:
             return unit.state.dimmer
         return None
@@ -160,7 +160,7 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
     @property
     def rgb_color(self) -> tuple[int, int, int] | None:
         """Return the rgb color of the unit."""
-        unit = cast("Unit", self._obj)
+        unit = self._obj
         if unit.state is not None:
             return unit.state.rgb
         return None
@@ -168,7 +168,7 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
     @property
     def rgbw_color(self) -> tuple[int, int, int, int] | None:
         """Return the rgbw color of the unit."""
-        unit = cast("Unit", self._obj)
+        unit = self._obj
         if (
             unit.state is not None
             and unit.state.rgb is not None
@@ -180,7 +180,7 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
     @property
     def color_temp_kelvin(self) -> int | None:
         """Return the color temperature in Kelvin."""
-        unit = cast("Unit", self._obj)
+        unit = self._obj
         if unit.state is not None:
             return unit.state.temperature
         return None
@@ -188,14 +188,14 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
     @property
     def xy_color(self) -> tuple[float, float] | None:
         """Return the XY color value."""
-        unit = cast("Unit", self._obj)
+        unit = self._obj
         if unit.state is not None:
             return unit.state.xy
         return None
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn on the unit."""
-        unit = cast("Unit", self._obj)
+        unit = self._obj
         state = copy(unit.state)
         if not state:
             state = UnitState()
@@ -234,7 +234,7 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
         # HACK: Try to get lights only supporting ONOFF to turn off.
         # SetLevel doesn't seem to work for unknown reasons.
         if self.color_mode == ColorMode.ONOFF:
-            unit = cast("Unit", self._obj)
+            unit = self._obj
             await self._async_casa_command(
                 self._api.casa._send(  # noqa: SLF001
                     unit, bytes(unit.unitType.stateLength), _operation.OpCode.SetState
@@ -251,7 +251,7 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
         """Initialize a Casambi group entity."""
 
         # Find union of supported color modes.
-        supported_modes: set[str] = set()
+        supported_modes: set[ColorMode] = set()
         for unit in group.units:
             supported_modes = supported_modes.union(self._capabilities_helper(unit))
 
