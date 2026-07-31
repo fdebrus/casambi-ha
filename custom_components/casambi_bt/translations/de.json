@@ -19,7 +19,8 @@
                 "data": {
                     "address": "Bluetooth MAC Adresse",
                     "import_groups": "Gruppen importieren",
-                    "password": "Passwort"
+                    "password": "Passwort",
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
                 },
                 "title": "Casambi Netzwerk einrichten",
                 "description": "Die Bluetooth MAC Adresse (Netzwerk ID) findest du in den Details deiner Lampen in der Casambi App."
@@ -29,6 +30,17 @@
                     "password": "Passwort"
                 },
                 "title": "Bitte bestätige dein Netzwerk Passwort."
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "import_groups": "Gruppen importieren",
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
+                },
+                "title": "Casambi Optionen"
             }
         }
     }

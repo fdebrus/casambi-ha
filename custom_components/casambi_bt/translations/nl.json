@@ -19,9 +19,21 @@
                 "data": {
                     "address": "Adres (Casambi NetworkID)",
                     "import_groups": "Importeer groupen?",
-                    "password": "Wachtwoord"
+                    "password": "Wachtwoord",
+                    "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?"
                 },
                 "title": "Configureer uw Casambi netwerk"
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "import_groups": "Importeer groupen?",
+                    "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?"
+                },
+                "title": "Casambi opties"
             }
         }
     }

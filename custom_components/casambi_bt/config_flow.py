@@ -17,14 +17,14 @@ from homeassistant.components.bluetooth import (
 )
 from homeassistant.components.bluetooth.models import BluetoothServiceInfoBleak
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.httpx_client import get_async_client
 
 from . import get_cache_dir
-from .const import CONF_IMPORT_GROUPS, DOMAIN
+from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, DOMAIN, entry_option
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +33,7 @@ USER_SCHEMA = vol.Schema(
         vol.Required(CONF_ADDRESS): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
         vol.Required(CONF_IMPORT_GROUPS, default=True): cv.boolean,
+        vol.Required(CONF_VERTICAL_AS_COVER, default=False): cv.boolean,
     }
 )
 
@@ -69,12 +70,49 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str
     return {"title": network_name, "id": data[CONF_ADDRESS]}
 
 
+class OptionsFlow(config_entries.OptionsFlow):
+    """Handle an options flow for Casambi Bluetooth."""
+
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize the options flow."""
+        self._entry = config_entry
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        schema = vol.Schema(
+            {
+                vol.Required(
+                    CONF_IMPORT_GROUPS,
+                    default=entry_option(self._entry, CONF_IMPORT_GROUPS, True),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_VERTICAL_AS_COVER,
+                    default=entry_option(self._entry, CONF_VERTICAL_AS_COVER, False),
+                ): cv.boolean,
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Casambi Bluetooth."""
 
     discovery_info: BluetoothServiceInfoBleak | None = None
 
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> OptionsFlow:
+        """Create the options flow."""
+        return OptionsFlow(config_entry)
 
     async def _async_create_casa_entry(
         self, title: str, id: str, data: dict[str, Any]

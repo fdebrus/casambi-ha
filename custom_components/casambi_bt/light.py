@@ -24,7 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi
-from .const import CONF_IMPORT_GROUPS, DOMAIN
+from .const import CONF_IMPORT_GROUPS, DOMAIN, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -56,7 +56,7 @@ async def async_setup_entry(
     ]
 
     group_entities: list[CasambiLight] = []
-    if config_entry.data[CONF_IMPORT_GROUPS]:
+    if entry_option(config_entry, CONF_IMPORT_GROUPS, True):
         group_entities = [CasambiLightGroup(casa_api, g) for g in casa_api.get_groups()]
 
     async_add_entities(light_entities + group_entities)

@@ -33,6 +33,7 @@ Functionality exposed to HA:
 - Lights
 - Light groups
 - Scenes
+- Covers (units with a vertical control, e.g. pergola louvres — see below)
 
 Supported control types:
 - Dimmer
@@ -40,7 +41,11 @@ Supported control types:
 - Rgb
 - OnOff
 - Temperature (Only for units since there are some open problems for groups.)
-- Vertical
+- Vertical (as a number entity, or optionally as a cover entity)
+
+### Pergola louvres (e.g. Winsol So!)
+
+Casambi-based pergolas such as the Winsol So! expose their louvre angle through the Casambi *vertical* control. By default this shows up in HA as a number entity. Enable **"Expose vertical controls as covers"** during setup (or later via the integration's *Configure* button) to get proper `cover` entities instead, with open/close buttons and position control (0 = closed, 100 = fully open). Cover entities work with HA dashboards, voice assistants, and automations much better than a raw number slider.
 
 Not supported yet:
 - Switches
