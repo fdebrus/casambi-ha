@@ -1,0 +1,16 @@
+# Test harness (pins a matching homeassistant version)
+pytest-homeassistant-custom-component==0.13.316
+
+# Integration requirement
+casambi-bt==0.3.2
+
+# Dependencies of the bluetooth component that the harness does not install
+aiousbwatcher
+bleak-retry-connector
+bluetooth-adapters
+bluetooth-auto-recovery
+bluetooth-data-tools
+dbus-fast
+habluetooth
+pyserial
+pyudev

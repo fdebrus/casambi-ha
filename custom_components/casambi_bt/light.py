@@ -263,6 +263,16 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
         if ColorMode.COLOR_TEMP in supported_modes:
             supported_modes.remove(ColorMode.COLOR_TEMP)
 
+        # HA doesn't allow combining UNKNOWN, ONOFF, or BRIGHTNESS with more
+        # capable modes, which can happen for groups with mixed unit types.
+        # Keep only the most capable modes in that case.
+        if len(supported_modes) > 1:
+            supported_modes.discard(ColorMode.UNKNOWN)
+        if len(supported_modes) > 1:
+            supported_modes.discard(ColorMode.ONOFF)
+        if len(supported_modes) > 1:
+            supported_modes.discard(ColorMode.BRIGHTNESS)
+
         if len(supported_modes) == 0:
             supported_modes.add(ColorMode.UNKNOWN)
         self._attr_supported_color_modes = supported_modes

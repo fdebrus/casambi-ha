@@ -21,7 +21,7 @@ rules:
       integrations in the home-assistant/brands repo).
   common-modules: done
   config-flow: done
-  config-flow-test-coverage: todo
+  config-flow-test-coverage: done
   dependency-transparency: done
   docs-actions:
     status: exempt
@@ -47,7 +47,11 @@ rules:
   log-when-unavailable: done
   parallel-updates: done
   reauthentication-flow: done
-  test-coverage: todo
+  test-coverage:
+    status: done
+    comment: |
+      Config flow, setup/unload, and the cover, light, number, and scene
+      platforms are covered by tests run in CI on every push.
 
   # Gold
   devices: done
