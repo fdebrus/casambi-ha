@@ -8,14 +8,15 @@
       "connectable": true
     }
   ],
-  "codeowners": ["@lkempf"],
+  "codeowners": ["@fdebrus", "@lkempf"],
   "config_flow": true,
   "dependencies": ["bluetooth_adapters"],
-  "documentation": "https://github.com/lkempf/casambi-bt-hass",
+  "documentation": "https://github.com/fdebrus/casambi-ha",
   "integration_type": "hub",
   "iot_class": "local_push",
+  "issue_tracker": "https://github.com/fdebrus/casambi-ha/issues",
   "loggers": ["CasambiBt"],
   "quality_scale": "silver",
   "requirements": ["casambi-bt==0.3.2"],
-  "version": "0.3.0"
+  "version": "0.4.0"
 }
