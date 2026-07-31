@@ -13,7 +13,8 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry
 from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
 
-from . import DOMAIN, CasambiApi
+from . import CasambiApi
+from .const import DOMAIN
 
 _LOGGER: Final = logging.getLogger(__name__)
 

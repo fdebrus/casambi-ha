@@ -103,4 +103,6 @@ rules:
     comment: The httpx client is injected via homeassistant.helpers.httpx_client.
   strict-typing:
     status: done
-    comment: casambi-bt ships py.typed; the integration is fully annotated.
+    comment: |
+      casambi-bt ships py.typed and the integration passes mypy --strict,
+      enforced in CI on every push.

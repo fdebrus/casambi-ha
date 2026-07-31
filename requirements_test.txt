@@ -1,5 +1,6 @@
 # Test harness (pins a matching homeassistant version)
 pytest-homeassistant-custom-component==0.13.316
+mypy==2.3.0
 
 # Integration requirement
 casambi-bt==0.3.2

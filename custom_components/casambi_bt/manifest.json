@@ -23,9 +23,9 @@
   "loggers": [
     "CasambiBt"
   ],
-  "quality_scale": "gold",
+  "quality_scale": "platinum",
   "requirements": [
     "casambi-bt==0.3.2"
   ],
-  "version": "0.6.0"
+  "version": "0.6.1"
 }

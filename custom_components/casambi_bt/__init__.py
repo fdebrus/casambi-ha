@@ -203,7 +203,7 @@ class CasambiApi:
             return self.casa.units
 
         return filter(
-            lambda u: any(uc.type in control_types for uc in u.unitType.controls),  # type: ignore[arg-type]
+            lambda u: any(uc.type in control_types for uc in u.unitType.controls),
             self.casa.units,
         )
 
