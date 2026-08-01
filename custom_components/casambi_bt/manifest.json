@@ -27,5 +27,5 @@
   "requirements": [
     "casambi-bt==0.3.2"
   ],
-  "version": "0.6.1"
+  "version": "0.6.2"
 }

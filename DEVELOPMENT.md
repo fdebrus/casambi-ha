@@ -10,6 +10,28 @@ The integration is `local_push`: the `casambi-bt` library keeps a BLE connection
 
 The integration status against the Home Assistant [integration quality scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/) is tracked in `custom_components/casambi_bt/quality_scale.yaml`.
 
+## Protocol capture workflow (decoding the pergola)
+
+To fully decode what a unit (e.g. a Winsol pergola) speaks over BLE, capture two artifacts and correlate them:
+
+1. **The schema — diagnostics download.** With the integration connected, go to Settings → Devices & services → Casambi Bluetooth → three-dot menu → *Download diagnostics*. The `units` section lists every unit's full control table: control type (including raw ids for types the library calls `UNKOWN`), bit offset, bit length, min/max, and the current parsed state. This shows *what channels exist*.
+
+2. **The traffic — debug log.** Enable debug logging in `configuration.yaml`:
+
+   ```yaml
+   logger:
+     default: info
+     logs:
+       CasambiBt: debug
+       custom_components.casambi_bt: debug
+   ```
+
+   Then drive the hardware through every state slowly, one action at a time, noting the time of each action: louvres fully open → 50% → closed (from the Casambi/Winsol app AND from HA), every wall switch / remote button (short press, long hold), lights on/off, and any accessories (screens, heating, sensors). The log contains the raw state bytes for every change (`Parsed <hex> to UnitState(...)`) and full switch packets (`[CASAMBI_SWITCH_PACKET] ...`).
+
+3. Sanitize the log before sharing (it can contain the network password and account email) or share only the `CasambiBt` lines; the diagnostics download is redacted automatically.
+
+Correlating "action performed" with "bytes that changed" identifies each control; unknown controls and unparsed message types are then implemented against the captured samples.
+
 ## Workflow
 
 This repository uses two important branches `main` and `dev`. Everything happening in `main` should be tested and planned for the next release. Changes that haven't been tested properly should only be applied to `dev`.
