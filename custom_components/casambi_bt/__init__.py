@@ -115,7 +115,12 @@ class CasambiApi:
 
         self._callback_map: dict[int, list[Callable[[Unit], None]]] = {}
         self._switch_event_callbacks: list[Callable[[SwitchEvent], None]] = []
+
+        # Shared state of the louvre automation entities.
         self.sun_offsets: dict[str, float] = {}
+        self.temp_control: dict[str, bool] = {}
+        self.temp_setpoints: dict[str, float] = {}
+        self.rain_active = False
         self._cancel_bluetooth_callback: Callable[[], None] | None = None
         self._reconnect_lock = asyncio.Lock()
         self._first_disconnect = True

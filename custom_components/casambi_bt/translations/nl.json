@@ -43,7 +43,9 @@
                 "data": {
                     "import_groups": "Importeer groupen?",
                     "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?",
-                    "louvre_azimuth": "Oriëntatie van de pergola (azimut in graden, 180 = zuid)"
+                    "louvre_azimuth": "Oriëntatie van de pergola (azimut in graden, 180 = zuid)",
+                    "wind_threshold": "Windgrens voor het intrekken van schermen (km/u)",
+                    "temperature_entity": "Temperatuursensor voor temperatuurregeling"
                 },
                 "title": "Casambi opties"
             }
@@ -73,6 +75,9 @@
             "sun_offset": {
                 "name": "Zon-offset"
             },
+            "temp_setpoint": {
+                "name": "Insteltemperatuur"
+            },
             "vertical": {
                 "name": "Verticaal"
             }
@@ -91,6 +96,12 @@
         "switch": {
             "sun_tracking": {
                 "name": "Zonvolging"
+            },
+            "temperature_control": {
+                "name": "Temperatuurregeling"
+            },
+            "weather_protection": {
+                "name": "Weerbescherming"
             }
         }
     },

@@ -41,6 +41,18 @@ The pergola's compass orientation is set in the integration options
 adjustments; nothing moves when the sun is down or behind the pergola.
 The math lives in `suntrack.py`, the scheduler in `switch.py`.
 
+**Temperature control**: the per-louvre *Temperature control* switch and
+*Temperature setpoint* number bias the sun tracking by
+`(setpoint − temperature) × 10°` (clamped with the user offset to ±45°) —
+warmer than the setpoint tilts toward shade, colder toward sun. The
+temperature source entity is chosen in the integration options.
+
+**Weather protection**: a network-level switch (created when a sensor
+platform exists). While on: rain (packet 0 ≥ 2) closes all louvres and
+pauses sun tracking until dry; wind at or above the configured threshold
+(default 35 km/h) retracts all screens, latched with 80% hysteresis, and
+never re-extends them automatically.
+
 ## Protocol capture workflow (decoding the pergola)
 
 To fully decode what a unit (e.g. a Winsol pergola) speaks over BLE, capture two artifacts and correlate them:

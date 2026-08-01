@@ -10,6 +10,7 @@ from custom_components.casambi_bt.const import (
     CONF_IMPORT_GROUPS,
     CONF_LOUVRE_AZIMUTH,
     CONF_VERTICAL_AS_COVER,
+    CONF_WIND_THRESHOLD,
     DOMAIN,
 )
 from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_RECONFIGURE, SOURCE_USER
@@ -141,6 +142,7 @@ async def test_options_flow(
         CONF_IMPORT_GROUPS: False,
         CONF_VERTICAL_AS_COVER: True,
         CONF_LOUVRE_AZIMUTH: 180,
+        CONF_WIND_THRESHOLD: 35,
     }
 
 

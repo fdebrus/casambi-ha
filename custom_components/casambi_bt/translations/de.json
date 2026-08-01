@@ -50,7 +50,9 @@
                 "data": {
                     "import_groups": "Gruppen importieren",
                     "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)",
-                    "louvre_azimuth": "Ausrichtung der Pergola (Azimut in Grad, 180 = Süden)"
+                    "louvre_azimuth": "Ausrichtung der Pergola (Azimut in Grad, 180 = Süden)",
+                    "wind_threshold": "Windgrenze zum Einfahren der Screens (km/h)",
+                    "temperature_entity": "Temperatursensor für die Temperaturregelung"
                 },
                 "title": "Casambi Optionen"
             }
@@ -80,6 +82,9 @@
             "sun_offset": {
                 "name": "Sonnen-Offset"
             },
+            "temp_setpoint": {
+                "name": "Solltemperatur"
+            },
             "vertical": {
                 "name": "Vertikal"
             }
@@ -98,6 +103,12 @@
         "switch": {
             "sun_tracking": {
                 "name": "Sonnennachführung"
+            },
+            "temperature_control": {
+                "name": "Temperaturregelung"
+            },
+            "weather_protection": {
+                "name": "Wetterschutz"
             }
         }
     },

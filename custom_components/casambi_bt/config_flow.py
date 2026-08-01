@@ -19,6 +19,7 @@ from homeassistant.components.bluetooth.models import BluetoothServiceInfoBleak
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import selector
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.httpx_client import get_async_client
@@ -27,8 +28,11 @@ from . import get_cache_dir
 from .const import (
     CONF_IMPORT_GROUPS,
     CONF_LOUVRE_AZIMUTH,
+    CONF_TEMPERATURE_ENTITY,
     CONF_VERTICAL_AS_COVER,
+    CONF_WIND_THRESHOLD,
     DEFAULT_LOUVRE_AZIMUTH,
+    DEFAULT_WIND_THRESHOLD,
     DOMAIN,
     entry_option,
 )
@@ -107,6 +111,24 @@ class OptionsFlow(config_entries.OptionsFlow):
                         self._entry, CONF_LOUVRE_AZIMUTH, DEFAULT_LOUVRE_AZIMUTH
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=359)),
+                vol.Required(
+                    CONF_WIND_THRESHOLD,
+                    default=entry_option(
+                        self._entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+                vol.Optional(
+                    CONF_TEMPERATURE_ENTITY,
+                    description={
+                        "suggested_value": entry_option(
+                            self._entry, CONF_TEMPERATURE_ENTITY, None
+                        )
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor", device_class="temperature"
+                    )
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
