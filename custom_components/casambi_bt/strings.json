@@ -48,7 +48,10 @@
         "title": "Casambi options",
         "data": {
           "import_groups": "Import groups?",
-          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?",
+          "louvre_azimuth": "Pergola orientation (azimuth in degrees, 180 = south)",
+          "wind_threshold": "Wind threshold for retracting screens (km/h)",
+          "temperature_entity": "Temperature sensor for temperature control"
         }
       }
     }
@@ -74,6 +77,12 @@
       }
     },
     "number": {
+      "sun_offset": {
+        "name": "Sun offset"
+      },
+      "temp_setpoint": {
+        "name": "Temperature setpoint"
+      },
       "vertical": {
         "name": "Vertical"
       }
@@ -87,6 +96,17 @@
       },
       "wind": {
         "name": "Wind speed"
+      }
+    },
+    "switch": {
+      "sun_tracking": {
+        "name": "Sun tracking"
+      },
+      "temperature_control": {
+        "name": "Temperature control"
+      },
+      "weather_protection": {
+        "name": "Weather protection"
       }
     }
   },

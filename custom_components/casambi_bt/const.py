@@ -14,11 +14,18 @@ PLATFORMS = [
     Platform.LIGHT,
     Platform.SCENE,
     Platform.SENSOR,
+    Platform.SWITCH,
     Platform.NUMBER,
 ]
 
 CONF_IMPORT_GROUPS: Final = "import_groups"
 CONF_VERTICAL_AS_COVER: Final = "vertical_as_cover"
+CONF_LOUVRE_AZIMUTH: Final = "louvre_azimuth"
+CONF_TEMPERATURE_ENTITY: Final = "temperature_entity"
+CONF_WIND_THRESHOLD: Final = "wind_threshold"
+
+DEFAULT_LOUVRE_AZIMUTH: Final = 180
+DEFAULT_WIND_THRESHOLD: Final = 35
 
 EVENT_BUTTON: Final = f"{DOMAIN}_button_event"
 

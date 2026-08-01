@@ -27,6 +27,32 @@ The rotating sensor packets are accumulated by the library in
 1 = wind (raw/4), 2 = solar (raw/4), 3 = PIR. Unit classification lives in
 `classify.py`.
 
+## Sun tracking
+
+Louvre units get a **Sun tracking** switch and a **Sun offset** number
+(config entities on the louvre device). While the switch is on, the
+integration recomputes the louvre angle every 5 minutes from the current
+solar position (via Home Assistant's astral location — the same engine as
+`sun.sun`): the slats are kept perpendicular to the sun's rays
+(`angle = 90° − profile angle + offset`, where
+`tan(profile) = tan(elevation) / cos(sun azimuth − pergola azimuth)`).
+The pergola's compass orientation is set in the integration options
+(default 180° = south). A deadband of ~3° avoids constant motor
+adjustments; nothing moves when the sun is down or behind the pergola.
+The math lives in `suntrack.py`, the scheduler in `switch.py`.
+
+**Temperature control**: the per-louvre *Temperature control* switch and
+*Temperature setpoint* number bias the sun tracking by
+`(setpoint − temperature) × 10°` (clamped with the user offset to ±45°) —
+warmer than the setpoint tilts toward shade, colder toward sun. The
+temperature source entity is chosen in the integration options.
+
+**Weather protection**: a network-level switch (created when a sensor
+platform exists). While on: rain (packet 0 ≥ 2) closes all louvres and
+pauses sun tracking until dry; wind at or above the configured threshold
+(default 35 km/h) retracts all screens, latched with 80% hysteresis, and
+never re-extends them automatically.
+
 ## Protocol capture workflow (decoding the pergola)
 
 To fully decode what a unit (e.g. a Winsol pergola) speaks over BLE, capture two artifacts and correlate them:
