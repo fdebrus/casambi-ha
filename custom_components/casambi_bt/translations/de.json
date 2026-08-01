@@ -49,7 +49,8 @@
             "init": {
                 "data": {
                     "import_groups": "Gruppen importieren",
-                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)",
+                    "louvre_azimuth": "Ausrichtung der Pergola (Azimut in Grad, 180 = Süden)"
                 },
                 "title": "Casambi Optionen"
             }
@@ -76,6 +77,9 @@
             }
         },
         "number": {
+            "sun_offset": {
+                "name": "Sonnen-Offset"
+            },
             "vertical": {
                 "name": "Vertikal"
             }
@@ -89,6 +93,11 @@
             },
             "wind": {
                 "name": "Windgeschwindigkeit"
+            }
+        },
+        "switch": {
+            "sun_tracking": {
+                "name": "Sonnennachführung"
             }
         }
     },

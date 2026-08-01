@@ -24,7 +24,14 @@ from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.httpx_client import get_async_client
 
 from . import get_cache_dir
-from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, DOMAIN, entry_option
+from .const import (
+    CONF_IMPORT_GROUPS,
+    CONF_LOUVRE_AZIMUTH,
+    CONF_VERTICAL_AS_COVER,
+    DEFAULT_LOUVRE_AZIMUTH,
+    DOMAIN,
+    entry_option,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +101,12 @@ class OptionsFlow(config_entries.OptionsFlow):
                     CONF_VERTICAL_AS_COVER,
                     default=entry_option(self._entry, CONF_VERTICAL_AS_COVER, False),
                 ): cv.boolean,
+                vol.Required(
+                    CONF_LOUVRE_AZIMUTH,
+                    default=entry_option(
+                        self._entry, CONF_LOUVRE_AZIMUTH, DEFAULT_LOUVRE_AZIMUTH
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=359)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

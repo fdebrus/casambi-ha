@@ -42,7 +42,8 @@
             "init": {
                 "data": {
                     "import_groups": "Importeer groupen?",
-                    "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?"
+                    "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?",
+                    "louvre_azimuth": "Oriëntatie van de pergola (azimut in graden, 180 = zuid)"
                 },
                 "title": "Casambi opties"
             }
@@ -69,6 +70,9 @@
             }
         },
         "number": {
+            "sun_offset": {
+                "name": "Zon-offset"
+            },
             "vertical": {
                 "name": "Verticaal"
             }
@@ -82,6 +86,11 @@
             },
             "wind": {
                 "name": "Windsnelheid"
+            }
+        },
+        "switch": {
+            "sun_tracking": {
+                "name": "Zonvolging"
             }
         }
     },

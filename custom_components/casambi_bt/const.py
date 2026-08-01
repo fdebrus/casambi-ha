@@ -14,11 +14,15 @@ PLATFORMS = [
     Platform.LIGHT,
     Platform.SCENE,
     Platform.SENSOR,
+    Platform.SWITCH,
     Platform.NUMBER,
 ]
 
 CONF_IMPORT_GROUPS: Final = "import_groups"
 CONF_VERTICAL_AS_COVER: Final = "vertical_as_cover"
+CONF_LOUVRE_AZIMUTH: Final = "louvre_azimuth"
+
+DEFAULT_LOUVRE_AZIMUTH: Final = 180
 
 EVENT_BUTTON: Final = f"{DOMAIN}_button_event"
 

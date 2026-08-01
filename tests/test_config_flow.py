@@ -8,6 +8,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.casambi_bt.const import (
     CONF_IMPORT_GROUPS,
+    CONF_LOUVRE_AZIMUTH,
     CONF_VERTICAL_AS_COVER,
     DOMAIN,
 )
@@ -139,6 +140,7 @@ async def test_options_flow(
     assert mock_config_entry.options == {
         CONF_IMPORT_GROUPS: False,
         CONF_VERTICAL_AS_COVER: True,
+        CONF_LOUVRE_AZIMUTH: 180,
     }
 
 

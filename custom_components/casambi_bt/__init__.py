@@ -115,6 +115,7 @@ class CasambiApi:
 
         self._callback_map: dict[int, list[Callable[[Unit], None]]] = {}
         self._switch_event_callbacks: list[Callable[[SwitchEvent], None]] = []
+        self.sun_offsets: dict[str, float] = {}
         self._cancel_bluetooth_callback: Callable[[], None] | None = None
         self._reconnect_lock = asyncio.Lock()
         self._first_disconnect = True

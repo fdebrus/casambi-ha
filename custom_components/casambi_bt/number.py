@@ -11,11 +11,15 @@ from homeassistant.components.number import (
     NumberEntity,
     NumberEntityDescription,
     NumberMode,
+    RestoreNumber,
 )
+from homeassistant.const import DEGREE
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
+from .classify import UnitKind, classify_unit
 from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, entry_option
 from .entities import (
     CasambiEntity,
@@ -35,30 +39,70 @@ async def async_setup_entry(
     config_entry: CasambiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create the Casambi vertical entity."""
-    # The vertical control is exposed as a cover instead.
-    if entry_option(config_entry, CONF_VERTICAL_AS_COVER, False):
-        return
-
+    """Create the Casambi number entities."""
     casa_api = config_entry.runtime_data
 
-    light_entities: list[CasambiVerticalNumber] = [
-        CasambiVerticalNumberUnit(casa_api, u)
-        for u in casa_api.get_units([UnitControlType.VERTICAL])
+    entities: list[NumberEntity] = [
+        CasambiSunOffsetNumber(casa_api, u)
+        for u in casa_api.get_units()
+        if classify_unit(u) is UnitKind.LOUVRE
     ]
 
-    group_entities: list[CasambiVerticalNumber] = []
-    if entry_option(config_entry, CONF_IMPORT_GROUPS, True):
-        for g in casa_api.get_groups():
-            has_vert = False
-            for u in g.units:
-                if u.unitType.get_control(UnitControlType.VERTICAL) is not None:
-                    has_vert = True
-                    break
-            if has_vert:
-                group_entities.append(CasambiVerticalNumberGroup(casa_api, g))
+    # The vertical control is exposed as a cover instead when enabled.
+    if not entry_option(config_entry, CONF_VERTICAL_AS_COVER, False):
+        entities.extend(
+            CasambiVerticalNumberUnit(casa_api, u)
+            for u in casa_api.get_units([UnitControlType.VERTICAL])
+        )
+        if entry_option(config_entry, CONF_IMPORT_GROUPS, True):
+            entities.extend(
+                CasambiVerticalNumberGroup(casa_api, g)
+                for g in casa_api.get_groups()
+                if any(
+                    u.unitType.get_control(UnitControlType.VERTICAL) is not None
+                    for u in g.units
+                )
+            )
 
-    async_add_entities(light_entities + group_entities)
+    async_add_entities(entities)
+
+
+class CasambiSunOffsetNumber(CasambiUnitEntity, RestoreNumber):
+    """Sun preference for the sun tracking of a louvre unit.
+
+    Positive values tilt the louvres toward more sun, negative values
+    toward more shade. Used by the sun tracking switch.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.SLIDER
+    _attr_native_min_value = -45
+    _attr_native_max_value = 45
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = DEGREE
+    _attr_native_value = 0.0
+
+    def __init__(self, api: CasambiApi, unit: Unit) -> None:
+        """Initialize a sun offset entity."""
+        desc = TypedEntityDescription(
+            key=unit.uuid, entity_type="sun-offset", translation_key="sun_offset"
+        )
+        self._obj: Unit
+        super().__init__(api, desc, unit)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous offset."""
+        await super().async_added_to_hass()
+        last_number_data = await self.async_get_last_number_data()
+        if last_number_data is not None and last_number_data.native_value is not None:
+            self._attr_native_value = last_number_data.native_value
+            self._api.sun_offsets[self._obj.uuid] = last_number_data.native_value
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the sun offset."""
+        self._attr_native_value = value
+        self._api.sun_offsets[self._obj.uuid] = value
+        self.async_write_ha_state()
 
 
 class TypedNumberEntityDescription(TypedEntityDescription, NumberEntityDescription):
