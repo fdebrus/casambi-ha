@@ -194,6 +194,8 @@ def make_sensor_platform_unit() -> Unit:
         model="Sensor Platform V4",
         state_length=5,
     )
+    # Enable bits 34-37 set (byte 4 = 0b00111100), like the real defaults.
+    state._raw_state = bytes([0, 0, 0, 0, 0x3C])  # noqa: SLF001
     unit._sensor_cache.update({0: 1, 1: 140, 2: 40, 3: 0})  # noqa: SLF001
     return unit
 

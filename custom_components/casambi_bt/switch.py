@@ -14,7 +14,7 @@ from datetime import timedelta
 import logging
 from typing import Any, Final
 
-from CasambiBt import Unit
+from CasambiBt import Unit, UnitControl, UnitControlType
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.core import HomeAssistant, callback
@@ -65,6 +65,23 @@ DEFAULT_TEMP_SETPOINT: Final = 22.0
 # threshold.
 WIND_HYSTERESIS: Final = 0.8
 
+# The sensor platform's writable enable bits, in bit-offset order
+# (Sensor Platform V4: wind at 34, rain at 35, light at 36, motion at 37).
+SENSOR_ENABLE_KEYS: Final = (
+    "wind_sensor_enabled",
+    "rain_sensor_enabled",
+    "light_sensor_enabled",
+    "motion_sensor_enabled",
+)
+
+
+def _read_bit(raw: bytes, offset: int) -> bool | None:
+    """Read a single bit from the raw state bytes."""
+    byte_index, bit_index = divmod(offset, 8)
+    if byte_index >= len(raw):
+        return None
+    return bool(raw[byte_index] >> bit_index & 1)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -91,6 +108,20 @@ async def async_setup_entry(
     for unit in louvres:
         entities.append(CasambiSunTrackingSwitch(casa_api, unit, config_entry))
         entities.append(CasambiTemperatureControlSwitch(casa_api, unit))
+
+    for unit in sensor_platforms:
+        enable_controls = sorted(
+            (
+                c
+                for c in unit.unitType.controls
+                if c.type == UnitControlType.ONOFF and not c.readonly
+            ),
+            key=lambda c: c.offset,
+        )
+        entities.extend(
+            CasambiSensorEnableSwitch(casa_api, unit, control, key)
+            for control, key in zip(enable_controls, SENSOR_ENABLE_KEYS, strict=False)
+        )
 
     if sensor_platforms and (louvres or screens):
         entities.append(
@@ -261,6 +292,53 @@ class CasambiTemperatureControlSwitch(CasambiUnitEntity, SwitchEntity, RestoreEn
         """Disable the temperature bias."""
         self._attr_is_on = False
         self._api.temp_control[self._obj.uuid] = False
+        self.async_write_ha_state()
+
+
+class CasambiSensorEnableSwitch(CasambiUnitEntity, SwitchEntity):
+    """Enables or disables one element of a Casambi sensor platform.
+
+    The sensor platform carries writable enable bits for its elements
+    (wind, rain, light, motion). The bit gates the element's reporting
+    and the network's own use of it - disabling the rain element also
+    disables the pergola's built-in rain protection.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def __init__(
+        self, api: CasambiApi, unit: Unit, control: UnitControl, translation_key: str
+    ) -> None:
+        """Initialize a sensor enable switch."""
+        desc = TypedEntityDescription(
+            key=unit.uuid,
+            entity_type=f"enable-{control.offset}",
+            translation_key=translation_key,
+        )
+        self._obj: Unit
+        super().__init__(api, desc, unit)
+        self._control = control
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if the sensor element is enabled."""
+        unit = self._obj
+        if unit.state is None or unit.state.raw_state is None:
+            return None
+        return _read_bit(unit.state.raw_state, self._control.offset)
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable the sensor element."""
+        await self._async_casa_command(
+            self._api.casa.setControlValue(self._obj, self._control, 1)
+        )
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable the sensor element."""
+        await self._async_casa_command(
+            self._api.casa.setControlValue(self._obj, self._control, 0)
+        )
         self.async_write_ha_state()
 
 

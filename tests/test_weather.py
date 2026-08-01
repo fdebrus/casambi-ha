@@ -168,3 +168,37 @@ async def test_weather_protection_off_does_nothing(
     mock_casambi.setSlider.assert_not_awaited()
     mock_casambi.setLevel.assert_not_awaited()
     assert api.rain_active is False
+
+
+async def test_sensor_enable_switches(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the sensor element enable switches."""
+    await _setup(hass, mock_config_entry)
+
+    prefix = f"{mock_casambi.networkId}-unit-{SENSOR_PLATFORM_UUID}"
+
+    # Wind enable is bit 34; the fixture starts with all enables set.
+    wind_id = _entity_id(hass, "switch", f"{prefix}-enable-34")
+    state = hass.states.get(wind_id)
+    assert state is not None
+    assert state.state == "on"
+
+    await hass.services.async_call(
+        "switch",
+        "turn_off",
+        {ATTR_ENTITY_ID: wind_id},
+        blocking=True,
+    )
+
+    mock_casambi.setControlValue.assert_awaited_once()
+    _, control, value = mock_casambi.setControlValue.await_args.args
+    assert control.offset == 34
+    assert value == 0
+
+    # All four enable switches exist (offsets 34-37).
+    for offset in (35, 36, 37):
+        assert _entity_id(hass, "switch", f"{prefix}-enable-{offset}") is not None
