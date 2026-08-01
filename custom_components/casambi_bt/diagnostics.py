@@ -48,6 +48,9 @@ def _state_details(state: UnitState | None) -> dict[str, Any] | None:
         "colorsource": state.colorsource.name if state.colorsource else None,
         "xy": state.xy,
         "onoff": state.onoff,
+        "presence": state.presence,
+        "lux": state.lux,
+        "raw_state": state.raw_state.hex() if state.raw_state else None,
     }
 
 
@@ -86,6 +89,7 @@ async def async_get_config_entry_diagnostics(
                     _control_details(control) for control in unit.unitType.controls
                 ],
                 "state": _state_details(unit.state),
+                "sensor_cache": dict(unit.sensor_cache),
             }
             for unit in casa.units
         ],

@@ -7,7 +7,7 @@ from copy import copy
 import logging
 from typing import Any, Final
 
-from CasambiBt import ColorSource, Group, Unit, UnitControlType, UnitState, _operation
+from CasambiBt import ColorSource, Group, Unit, UnitControlType, UnitState
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
@@ -23,6 +23,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
+from .classify import UnitKind, classify_unit
 from .const import CONF_IMPORT_GROUPS, entry_option
 from .entities import (
     CasambiEntity,
@@ -53,8 +54,12 @@ async def async_setup_entry(
     """Create the Casambi light entities."""
     casa_api = config_entry.runtime_data
 
+    # Units like louvre or screen motors carry dimmer/onoff controls but are
+    # covers, not lights.
     light_entities: list[CasambiLight] = [
-        CasambiLightUnit(casa_api, u) for u in casa_api.get_units(CASA_LIGHT_CTRL_TYPES)
+        CasambiLightUnit(casa_api, u)
+        for u in casa_api.get_units(CASA_LIGHT_CTRL_TYPES)
+        if classify_unit(u) is UnitKind.LIGHT
     ]
 
     group_entities: list[CasambiLight] = []
@@ -231,15 +236,9 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn off the unit."""
-        # HACK: Try to get lights only supporting ONOFF to turn off.
-        # SetLevel doesn't seem to work for unknown reasons.
+        # Lights only supporting ONOFF need a state write instead of SetLevel.
         if self.color_mode == ColorMode.ONOFF:
-            unit = self._obj
-            await self._async_casa_command(
-                self._api.casa._send(  # noqa: SLF001
-                    unit, bytes(unit.unitType.stateLength), _operation.OpCode.SetState
-                )
-            )
+            await self._async_casa_command(self._api.casa.turnOff(self._obj))
         else:
             await super().async_turn_off(**kwargs)
 

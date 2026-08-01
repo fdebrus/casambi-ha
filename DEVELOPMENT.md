@@ -10,6 +10,23 @@ The integration is `local_push`: the `casambi-bt` library keeps a BLE connection
 
 The integration status against the Home Assistant [integration quality scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/) is tracked in `custom_components/casambi_bt/quality_scale.yaml`.
 
+## Decoded Winsol hardware
+
+Based on real fixture definitions and on protocol work by the
+[superkikim/casambi-bt-hass](https://github.com/superkikim/casambi-bt-hass)
+fork (whose enhanced `casambi-bt-skk` library this integration uses):
+
+| Unit | Mode | Controls | Exposed as |
+|---|---|---|---|
+| Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), multiplexed sensors | Cover (blind) with position + stop |
+| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35), onoff `$toggle` (bit 36), travel-time sensors | Cover (shade) with position + stop |
+| Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
+
+The rotating sensor packets are accumulated by the library in
+`unit.sensor_cache`, keyed by packet type: 0 = rain (1 dry, 5 raining),
+1 = wind (raw/4), 2 = solar (raw/4), 3 = PIR. Unit classification lives in
+`classify.py`.
+
 ## Protocol capture workflow (decoding the pergola)
 
 To fully decode what a unit (e.g. a Winsol pergola) speaks over BLE, capture two artifacts and correlate them:
