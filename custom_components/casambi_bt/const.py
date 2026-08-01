@@ -13,6 +13,7 @@ PLATFORMS = [
     Platform.EVENT,
     Platform.LIGHT,
     Platform.SCENE,
+    Platform.SENSOR,
     Platform.NUMBER,
 ]
 

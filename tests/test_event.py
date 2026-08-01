@@ -20,10 +20,10 @@ def _make_switch_event(
     button: int, unit_id: int, event: ButtonEventType
 ) -> SwitchEvent:
     return SwitchEvent(
-        message_type=0x10,
+        button_event_index=button - 1,
         button=button,
         unit_id=unit_id,
-        action=0x01,
+        target_type=0x06,
         event=event,
         flags=0,
         extra_data=b"",

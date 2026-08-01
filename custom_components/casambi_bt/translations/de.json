@@ -57,6 +57,15 @@
     },
     "entity": {
         "binary_sensor": {
+            "motion": {
+                "name": "Bewegung"
+            },
+            "presence": {
+                "name": "Anwesenheit"
+            },
+            "rain": {
+                "name": "Regen"
+            },
             "status": {
                 "name": "Status"
             }
@@ -69,6 +78,17 @@
         "number": {
             "vertical": {
                 "name": "Vertikal"
+            }
+        },
+        "sensor": {
+            "illuminance": {
+                "name": "Helligkeit"
+            },
+            "solar": {
+                "name": "Sonneneinstrahlung"
+            },
+            "wind": {
+                "name": "Windgeschwindigkeit"
             }
         }
     },

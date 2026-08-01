@@ -10,7 +10,12 @@ from typing import Final
 
 from CasambiBt import Casambi, Group, Scene, Unit, UnitControlType
 from CasambiBt._switch import SwitchEvent
-from CasambiBt.errors import AuthenticationError, BluetoothError, NetworkNotFoundError
+from CasambiBt.errors import (
+    AuthenticationError,
+    BluetoothDeviceNotFoundError,
+    BluetoothError,
+    NetworkNotFoundError,
+)
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -150,7 +155,7 @@ class CasambiApi:
                 )
             self._first_disconnect = True
             self._check_network_changes()
-        except BluetoothError as err:
+        except (BluetoothError, BluetoothDeviceNotFoundError) as err:
             raise ConfigEntryNotReady("Failed to use bluetooth") from err
         except NetworkNotFoundError as err:
             raise ConfigEntryNotReady(

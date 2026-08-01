@@ -29,6 +29,9 @@ NETWORK_NAME = "Test Network"
 
 LIGHT_UUID = "unit-light-uuid"
 LOUVRE_UUID = "unit-louvre-uuid"
+WINSOL_LOUVRE_UUID = "unit-winsol-louvre-uuid"
+WINSOL_SCREEN_UUID = "unit-winsol-screen-uuid"
+SENSOR_PLATFORM_UUID = "unit-sensor-platform-uuid"
 
 
 @pytest.fixture(autouse=True)
@@ -44,14 +47,17 @@ def _make_unit(
     name: str,
     controls: list[UnitControl],
     state: UnitState | None,
+    mode: str = "",
+    model: str = "Test model",
+    state_length: int = 2,
 ) -> Unit:
     """Create a CasambiBt unit for testing."""
     unit_type = UnitType(
         id=type_id,
-        model="Test model",
+        model=model,
         manufacturer="Casambi",
-        mode="",
-        stateLength=2,
+        mode=mode,
+        stateLength=state_length,
         controls=controls,
     )
     unit = Unit(
@@ -97,6 +103,101 @@ def make_louvre_unit() -> Unit:
     )
 
 
+def make_winsol_louvre_unit() -> Unit:
+    """Create a unit modeled on the Winsol Lamel Standard V4.1 fixture.
+
+    Control layout from the real fixture definition: multiplexed sensors
+    (bits 0-27), slider $pos (bits 28-35, 0-142 degrees), and onoff
+    $startstop (bit 36).
+    """
+    state = UnitState()
+    state.slider = 128
+    unit = _make_unit(
+        38915,
+        10,
+        WINSOL_LOUVRE_UUID,
+        "Pergola Louvres",
+        [
+            UnitControl(UnitControlType.UNKNOWN, 0, 4, 0, True),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True),
+            UnitControl(UnitControlType.UNKNOWN, 4, 24, 0, True),
+            UnitControl(UnitControlType.SLIDER, 28, 8, 255, False, 0, 142),
+            UnitControl(UnitControlType.ONOFF, 36, 1, 0, False),
+        ],
+        state,
+        mode="EXT/Elements",
+        model="Winsol Lamel Standard V4.1 TA16 180-3500N",
+        state_length=5,
+    )
+    state._raw_state = bytes(5)  # noqa: SLF001
+    return unit
+
+
+def make_winsol_screen_unit() -> Unit:
+    """Create a unit modeled on the Winsol SO! V4.1 screen fixture.
+
+    Control layout from the real fixture definition: travel-time sensors
+    (bits 0-27), dimmer "Screen Position" (bits 28-35), onoff $toggle
+    (bit 36).
+    """
+    state = UnitState()
+    state.dimmer = 64
+    unit = _make_unit(
+        27814,
+        11,
+        WINSOL_SCREEN_UUID,
+        "Terrace Screen",
+        [
+            UnitControl(UnitControlType.UNKNOWN, 0, 4, 0, True),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True),
+            UnitControl(UnitControlType.UNKNOWN, 4, 24, 0, True),
+            UnitControl(UnitControlType.DIMMER, 28, 8, 255, False),
+            UnitControl(UnitControlType.ONOFF, 36, 1, 0, False),
+        ],
+        state,
+        mode="EXT/1ch/Dim",
+        model="SO! V4.1",
+        state_length=5,
+    )
+    state._raw_state = bytes(5)  # noqa: SLF001
+    return unit
+
+
+def make_sensor_platform_unit() -> Unit:
+    """Create a unit modeled on the LEDsGO Sensor Platform V4 fixture.
+
+    Control layout from the real fixture definition: presence (bits 0-1),
+    lux (bits 2-13), multiplexed wind/sun/PIR/rain (bits 14-33), and four
+    writable sensor-enable switches (bits 34-37).
+    """
+    state = UnitState()
+    state.presence = 1
+    state.lux = 1234
+    unit = _make_unit(
+        19772,
+        12,
+        SENSOR_PLATFORM_UUID,
+        "Weather Station",
+        [
+            UnitControl(UnitControlType.PRESENCE, 0, 2, 0, True),
+            UnitControl(UnitControlType.LUX, 2, 12, 0, True, 0, 10000),
+            UnitControl(UnitControlType.UNKNOWN, 14, 4, 0, True),
+            UnitControl(UnitControlType.SENSOR, 18, 0, 0, True),
+            UnitControl(UnitControlType.UNKNOWN, 18, 16, 0, True),
+            UnitControl(UnitControlType.ONOFF, 34, 1, 1, False),
+            UnitControl(UnitControlType.ONOFF, 35, 1, 1, False),
+            UnitControl(UnitControlType.ONOFF, 36, 1, 1, False),
+            UnitControl(UnitControlType.ONOFF, 37, 1, 1, False),
+        ],
+        state,
+        mode="EXT/Elements{Presence,Daylight}",
+        model="Sensor Platform V4",
+        state_length=5,
+    )
+    unit._sensor_cache.update({0: 1, 1: 140, 2: 40, 3: 0})  # noqa: SLF001
+    return unit
+
+
 @pytest.fixture
 def mock_casambi() -> Generator[MagicMock]:
     """Mock the Casambi library for the integration and the config flow."""
@@ -115,9 +216,19 @@ def mock_casambi() -> Generator[MagicMock]:
     casa.networkId = NETWORK_ID
     casa.networkName = NETWORK_NAME
 
+    casa.setControlValue = AsyncMock()
+    casa.setSlider = AsyncMock()
+    casa.turnOff = AsyncMock()
+
     light = make_light_unit()
     louvre = make_louvre_unit()
-    casa.units = [light, louvre]
+    casa.units = [
+        light,
+        louvre,
+        make_winsol_louvre_unit(),
+        make_winsol_screen_unit(),
+        make_sensor_platform_unit(),
+    ]
     casa.groups = [Group(1, "Pergola", [light, louvre])]
     casa.scenes = [Scene(1, "Evening")]
 
