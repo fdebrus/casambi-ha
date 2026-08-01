@@ -101,6 +101,15 @@
             }
         },
         "switch": {
+            "light_sensor_enabled": {
+                "name": "Light sensor enabled"
+            },
+            "motion_sensor_enabled": {
+                "name": "Motion sensor enabled"
+            },
+            "rain_sensor_enabled": {
+                "name": "Rain sensor enabled"
+            },
             "sun_tracking": {
                 "name": "Sun tracking"
             },
@@ -109,6 +118,9 @@
             },
             "weather_protection": {
                 "name": "Weather protection"
+            },
+            "wind_sensor_enabled": {
+                "name": "Wind sensor enabled"
             }
         }
     },
