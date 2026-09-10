@@ -33,7 +33,12 @@ from .const import (
     DEFAULT_WIND_THRESHOLD,
     entry_option,
 )
-from .entities import CasambiNetworkEntity, CasambiUnitEntity, TypedEntityDescription
+from .entities import (
+    CasambiBroadcastUnitEntity,
+    CasambiNetworkEntity,
+    CasambiUnitEntity,
+    TypedEntityDescription,
+)
 from .sensor import PACKET_WIND
 from .suntrack import LOUVRE_MAX_ANGLE, compute_louvre_angle, get_sun_position
 
@@ -295,7 +300,7 @@ class CasambiTemperatureControlSwitch(CasambiUnitEntity, SwitchEntity, RestoreEn
         self.async_write_ha_state()
 
 
-class CasambiSensorEnableSwitch(CasambiUnitEntity, SwitchEntity):
+class CasambiSensorEnableSwitch(CasambiBroadcastUnitEntity, SwitchEntity):
     """Enables or disables one element of a Casambi sensor platform.
 
     The sensor platform carries writable enable bits for its elements

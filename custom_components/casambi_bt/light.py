@@ -254,13 +254,21 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
         for unit in group.units:
             supported_modes = supported_modes.union(self._capabilities_helper(unit))
 
-        # Color temperature for groups isn't supported yet.
-        # Open problems:
-        #  - How do we determine min and max temperature? Is it the union or intersection of the intervals?
-        #    We can't really scale the temperature since we don't have a min or max.
-        #  - How does the SetTemperature opcode work (for casambi-bt)?
+        # Color temperature is supported for groups; the range is the
+        # intersection of the members' ranges so that every member can
+        # reach any temperature the group offers.
         if ColorMode.COLOR_TEMP in supported_modes:
-            supported_modes.remove(ColorMode.COLOR_TEMP)
+            minima: list[int] = []
+            maxima: list[int] = []
+            for unit in group.units:
+                control = unit.unitType.get_control(UnitControlType.TEMPERATURE)
+                if control is None or control.min is None or control.max is None:
+                    continue
+                minima.append(control.min)
+                maxima.append(control.max)
+            if minima and maxima:
+                self._attr_min_color_temp_kelvin = max(minima)
+                self._attr_max_color_temp_kelvin = min(maxima)
 
         # HA doesn't allow combining UNKNOWN, ONOFF, or BRIGHTNESS with more
         # capable modes, which can happen for groups with mixed unit types.
@@ -346,6 +354,11 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
         if ATTR_BRIGHTNESS in kwargs:
             await self._async_casa_command(
                 self._api.casa.setLevel(self._obj, kwargs[ATTR_BRIGHTNESS])
+            )
+            was_set = True
+        if ATTR_COLOR_TEMP_KELVIN in kwargs:
+            await self._async_casa_command(
+                self._api.casa.setTemperature(self._obj, kwargs[ATTR_COLOR_TEMP_KELVIN])
             )
             was_set = True
         if ATTR_RGB_COLOR in kwargs:

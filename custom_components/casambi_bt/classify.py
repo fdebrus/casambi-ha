@@ -48,8 +48,10 @@ def classify_unit(unit: Unit) -> UnitKind:
       (e.g. Winsol Lamel louvres: slider $pos 0-142° + onoff $startstop).
     - EXT/1ch/Dim with only a dimmer is a motor-driven screen/blind whose
       position is reported as the dimmer value (e.g. Winsol SO!).
-    - EXT/Elements units with sensors and no actuator are sensor platforms
-      (e.g. Sensor Platform V4: presence, lux, wind, sun, rain).
+    - Units that report sensor readings and drive nothing are sensor
+      platforms (e.g. Sensor Platform V4: presence, lux, wind, sun, rain).
+      This is decided on the control types alone because the mode string
+      varies between installations.
     - Anything else with a dimmer or onoff control is treated as a light,
       matching the previous behavior.
     """
@@ -68,11 +70,10 @@ def classify_unit(unit: Unit) -> UnitKind:
     if mode.startswith("EXT/1ch/Dim") and UnitControlType.DIMMER in ctypes:
         return UnitKind.SCREEN
 
-    if (
-        mode.startswith("EXT/Elements")
-        and ctypes & _SENSOR_TYPES
-        and UnitControlType.DIMMER not in ctypes
-    ):
+    # Detected by control types rather than by the mode string: the mode
+    # naming varies between installations, but a unit that reports sensor
+    # readings and drives nothing is a sensor platform either way.
+    if ctypes & _SENSOR_TYPES and UnitControlType.DIMMER not in ctypes:
         return UnitKind.SENSOR_PLATFORM
 
     if UnitControlType.DIMMER in ctypes or UnitControlType.ONOFF in ctypes:

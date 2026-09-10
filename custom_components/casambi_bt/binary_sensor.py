@@ -16,7 +16,11 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
-from .entities import CasambiNetworkEntity, CasambiUnitEntity, TypedEntityDescription
+from .entities import (
+    CasambiBroadcastUnitEntity,
+    CasambiNetworkEntity,
+    TypedEntityDescription,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -81,7 +85,7 @@ class CasambiBinarySensorEntity(BinarySensorEntity, CasambiNetworkEntity):
         return True
 
 
-class CasambiPacketBinarySensor(CasambiUnitEntity, BinarySensorEntity):
+class CasambiPacketBinarySensor(CasambiBroadcastUnitEntity, BinarySensorEntity):
     """A multiplexed binary reading of a Casambi sensor platform."""
 
     _packet_type: int
@@ -128,7 +132,7 @@ class CasambiPirSensor(CasambiPacketBinarySensor):
         super().__init__(api, unit, "motion")
 
 
-class CasambiPresenceSensor(CasambiUnitEntity, BinarySensorEntity):
+class CasambiPresenceSensor(CasambiBroadcastUnitEntity, BinarySensorEntity):
     """The presence reading of a Casambi sensor platform."""
 
     _attr_device_class = BinarySensorDeviceClass.OCCUPANCY

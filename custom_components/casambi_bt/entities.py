@@ -209,3 +209,18 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
         """Run when the unit will be removed from hass."""
         unit = cast("CasambiUnit", self._obj)
         self._api.unregister_unit_updates(unit, self._change_callback)
+
+
+class CasambiBroadcastUnitEntity(CasambiUnitEntity, metaclass=ABCMeta):
+    """Base entity for units that only broadcast their state.
+
+    Sensor platforms are passive emitters: they push their readings into
+    the mesh but never join it as a controllable node, so they always
+    report ``online=False``. Their entities must therefore not depend on
+    the unit's online flag, only on the network connection.
+    """
+
+    @property
+    def available(self) -> bool:
+        """Return True if the network is connected."""
+        return self._api.available
