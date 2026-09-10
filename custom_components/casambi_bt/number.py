@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABCMeta
 import logging
+from typing import cast
 
 from CasambiBt import Group, Unit, UnitControlType
 
@@ -14,7 +15,7 @@ from homeassistant.components.number import (
     NumberMode,
     RestoreNumber,
 )
-from homeassistant.const import DEGREE, UnitOfTemperature
+from homeassistant.const import DEGREE, UnitOfSpeed, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -22,7 +23,9 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
 from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, entry_option
+from .demo import DemoCasambi
 from .entities import (
+    CasambiBroadcastUnitEntity,
     CasambiEntity,
     CasambiNetworkGroup,
     CasambiUnitEntity,
@@ -64,6 +67,13 @@ async def async_setup_entry(
                     for u in g.units
                 )
             )
+
+    if casa_api.demo:
+        entities.extend(
+            CasambiDemoWindNumber(casa_api, u)
+            for u in casa_api.get_units()
+            if classify_unit(u) is UnitKind.SENSOR_PLATFORM
+        )
 
     async_add_entities(entities)
 
@@ -226,3 +236,38 @@ class CasambiVerticalNumberGroup(CasambiVerticalNumber, CasambiNetworkGroup):
         if values:
             return sum(values) / len(values)
         return None
+
+
+class CasambiDemoWindNumber(CasambiBroadcastUnitEntity, NumberEntity):
+    """Drives the simulated wind speed of the demo network."""
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_mode = NumberMode.SLIDER
+    _attr_native_min_value = 0
+    _attr_native_max_value = 100
+    _attr_native_step = 1
+    _attr_native_unit_of_measurement = UnitOfSpeed.KILOMETERS_PER_HOUR
+    _attr_device_class = NumberDeviceClass.WIND_SPEED
+
+    def __init__(self, api: CasambiApi, unit: Unit) -> None:
+        """Initialize the demo wind control."""
+        desc = TypedEntityDescription(
+            key=unit.uuid, entity_type="demo-wind", translation_key="demo_wind"
+        )
+        self._obj: Unit
+        super().__init__(api, desc, unit)
+
+    @property
+    def _demo(self) -> DemoCasambi:
+        return cast("DemoCasambi", self._api.casa)
+
+    @property
+    def native_value(self) -> float:
+        """Return the simulated wind speed."""
+        return self._demo.wind_kmh
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the simulated wind speed."""
+        self._demo.wind_kmh = value
+        self._demo.refresh_sensors()
+        self.async_write_ha_state()

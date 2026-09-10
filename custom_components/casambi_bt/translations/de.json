@@ -17,16 +17,6 @@
             "unknown": "Unerwarteter Fehler"
         },
         "step": {
-            "user": {
-                "data": {
-                    "address": "Bluetooth MAC Adresse",
-                    "import_groups": "Gruppen importieren",
-                    "password": "Passwort",
-                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
-                },
-                "title": "Casambi Netzwerk einrichten",
-                "description": "Die Bluetooth MAC Adresse (Netzwerk ID) findest du in den Details deiner Lampen in der Casambi App."
-            },
             "reconfigure": {
                 "data": {
                     "address": "Bluetooth MAC Adresse",
@@ -41,6 +31,22 @@
                     "password": "Passwort"
                 },
                 "title": "Bitte bestätige dein Netzwerk Passwort."
+            },
+            "network": {
+                "data": {
+                    "address": "Bluetooth MAC Adresse",
+                    "import_groups": "Gruppen importieren",
+                    "password": "Passwort",
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
+                },
+                "title": "Casambi Netzwerk einrichten",
+                "description": "Die Bluetooth MAC Adresse (Netzwerk ID) findest du in den Details deiner Lampen in der Casambi App."
+            },
+            "user": {
+                "menu_options": {
+                    "network": "Mit einem Casambi Netzwerk verbinden",
+                    "demo": "Demo (ohne Hardware)"
+                }
             }
         }
     },
@@ -79,6 +85,9 @@
             }
         },
         "number": {
+            "demo_wind": {
+                "name": "Simulierter Wind"
+            },
             "sun_offset": {
                 "name": "Sonnen-Offset"
             },
@@ -101,6 +110,12 @@
             }
         },
         "switch": {
+            "demo_presence": {
+                "name": "Anwesenheit simulieren"
+            },
+            "demo_rain": {
+                "name": "Regen simulieren"
+            },
             "light_sensor_enabled": {
                 "name": "Lichtsensor aktiviert"
             },

@@ -53,6 +53,15 @@ pauses sun tracking until dry; wind at or above the configured threshold
 (default 35 km/h) retracts all screens, latched with 80% hysteresis, and
 never re-extends them automatically.
 
+## Demo mode
+
+`demo.py` contains `DemoCasambi`, a local stand-in that implements the parts
+of the `CasambiBt.Casambi` API the integration uses. It builds real `Unit`,
+`Group` and `Scene` objects from the Winsol fixture definitions, applies
+commands to their state and notifies the registered handlers, so every
+platform behaves as it does against hardware. `CasambiApi` selects it when
+the config entry carries `demo: true` and then skips Bluetooth entirely.
+
 ## Protocol capture workflow (decoding the pergola)
 
 To fully decode what a unit (e.g. a Winsol pergola) speaks over BLE, capture two artifacts and correlate them:

@@ -1,15 +1,6 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "Configure your Casambi network",
-        "data": {
-          "address": "Address (Casambi NetworkID)",
-          "password": "[%key:common::config_flow::data::password%]",
-          "import_groups": "Import groups?",
-          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
-        }
-      },
       "reconfigure": {
         "title": "Reconfigure your Casambi network",
         "data": {
@@ -23,6 +14,21 @@
         "description": "Please verify your network password.",
         "data": {
           "password": "[%key:common::config_flow::data::password%]"
+        }
+      },
+      "network": {
+        "title": "Configure your Casambi network",
+        "data": {
+          "address": "Address (Casambi NetworkID)",
+          "password": "[%key:common::config_flow::data::password%]",
+          "import_groups": "Import groups?",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
+        }
+      },
+      "user": {
+        "menu_options": {
+          "network": "Connect to a Casambi network",
+          "demo": "Demo (no hardware needed)"
         }
       }
     },
@@ -77,6 +83,9 @@
       }
     },
     "number": {
+      "demo_wind": {
+        "name": "Simulated wind"
+      },
       "sun_offset": {
         "name": "Sun offset"
       },
@@ -99,6 +108,12 @@
       }
     },
     "switch": {
+      "demo_presence": {
+        "name": "Simulate presence"
+      },
+      "demo_rain": {
+        "name": "Simulate rain"
+      },
       "light_sensor_enabled": {
         "name": "Light sensor enabled"
       },

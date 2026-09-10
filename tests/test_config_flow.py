@@ -28,15 +28,24 @@ USER_INPUT = {
 }
 
 
+async def _start_network_flow(hass: HomeAssistant) -> dict:
+    """Open the config flow and choose the real-network branch."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_USER}
+    )
+    assert result["type"] is FlowResultType.MENU
+    return await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"next_step_id": "network"}
+    )
+
+
 async def test_user_flow_success(
     hass: HomeAssistant, mock_casambi: MagicMock, mock_bluetooth: MagicMock
 ) -> None:
     """Test a successful user config flow."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await _start_network_flow(hass)
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "user"
+    assert result["step_id"] == "network"
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], USER_INPUT
@@ -53,9 +62,7 @@ async def test_user_flow_invalid_address(
     hass: HomeAssistant, mock_casambi: MagicMock, mock_bluetooth: MagicMock
 ) -> None:
     """Test that a malformed address is rejected."""
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await _start_network_flow(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {**USER_INPUT, CONF_ADDRESS: "not-a-mac"}
     )
@@ -82,9 +89,7 @@ async def test_user_flow_errors(
     """Test that connection problems are shown as form errors."""
     mock_casambi.connect.side_effect = side_effect
 
-    result = await hass.config_entries.flow.async_init(
-        DOMAIN, context={"source": SOURCE_USER}
-    )
+    result = await _start_network_flow(hass)
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], USER_INPUT
     )
@@ -108,9 +113,7 @@ async def test_user_flow_no_scanner(
     with patch(
         "custom_components.casambi_bt.config_flow.async_scanner_count", return_value=0
     ):
-        result = await hass.config_entries.flow.async_init(
-            DOMAIN, context={"source": SOURCE_USER}
-        )
+        result = await _start_network_flow(hass)
 
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "bluetooth_error"

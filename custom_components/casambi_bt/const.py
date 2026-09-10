@@ -18,6 +18,7 @@ PLATFORMS = [
     Platform.NUMBER,
 ]
 
+CONF_DEMO: Final = "demo"
 CONF_IMPORT_GROUPS: Final = "import_groups"
 CONF_VERTICAL_AS_COVER: Final = "vertical_as_cover"
 CONF_LOUVRE_AZIMUTH: Final = "louvre_azimuth"

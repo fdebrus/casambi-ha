@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Callable, Iterable
 import logging
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 from CasambiBt import Casambi, Group, Scene, Unit, UnitControlType
 from CasambiBt._switch import SwitchEvent
@@ -29,7 +29,8 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.httpx_client import get_async_client
 
-from .const import DOMAIN, EVENT_BUTTON, PLATFORMS
+from .const import CONF_DEMO, DOMAIN, EVENT_BUTTON, PLATFORMS
+from .demo import DemoCasambi
 
 _LOGGER: Final = logging.getLogger(__name__)
 
@@ -38,7 +39,13 @@ type CasambiConfigEntry = ConfigEntry[CasambiApi]
 
 async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> bool:
     """Set up Casambi Bluetooth from a config entry."""
-    api = CasambiApi(hass, entry, entry.data[CONF_ADDRESS], entry.data[CONF_PASSWORD])
+    api = CasambiApi(
+        hass,
+        entry,
+        entry.data.get(CONF_ADDRESS, ""),
+        entry.data.get(CONF_PASSWORD, ""),
+        demo=entry.data.get(CONF_DEMO, False),
+    )
     await api.connect()
     entry.runtime_data = api
 
@@ -48,9 +55,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, api.casa.networkId)},
-        connections={(dr.CONNECTION_BLUETOOTH, api.address)},
+        connections=(set() if api.demo else {(dr.CONNECTION_BLUETOOTH, api.address)}),
         manufacturer="Casambi",
-        model="Network",
+        model="Demo network" if api.demo else "Network",
         name=api.casa.networkName,
     )
 
@@ -104,6 +111,7 @@ class CasambiApi:
         conf_entry: CasambiConfigEntry,
         address: str,
         password: str,
+        demo: bool = False,
     ) -> None:
         """Initialize a Casambi API."""
 
@@ -111,7 +119,13 @@ class CasambiApi:
         self.conf_entry = conf_entry
         self.address = address
         self.password = password
-        self.casa: Casambi = Casambi(get_async_client(hass), get_cache_dir(hass))
+        self.demo = demo
+        if demo:
+            # The demo network implements the parts of the library API that
+            # the integration uses, so the rest of the code is unchanged.
+            self.casa = cast("Casambi", DemoCasambi(hass))
+        else:
+            self.casa = Casambi(get_async_client(hass), get_cache_dir(hass))
 
         self._callback_map: dict[int, list[Callable[[Unit], None]]] = {}
         self._switch_event_callbacks: list[Callable[[SwitchEvent], None]] = []
@@ -137,6 +151,15 @@ class CasambiApi:
 
     async def connect(self) -> None:
         """Connect to the Casmabi network."""
+        if self.demo:
+            demo = cast("DemoCasambi", self.casa)
+            demo.registerUnitChangedHandler(self._unit_changed_handler)
+            demo.registerSwitchEventHandler(self._switch_event_handler)
+            self._handlers_registered = True
+            await demo.connect()
+            self._check_network_changes()
+            return
+
         try:
             device = bluetooth.async_ble_device_from_address(
                 self.hass, self.address, connectable=True
@@ -237,7 +260,9 @@ class CasambiApi:
 
             # This needs to happen before we disconnect.
             # We don't want to be informed about disconnects initiated by us.
-            if self._handlers_registered:
+            # The demo network never disconnects on its own, so no disconnect
+            # callback was registered for it.
+            if self._handlers_registered and not self.demo:
                 self.casa.unregisterDisconnectCallback(self._casa_disconnect)
 
             try:
