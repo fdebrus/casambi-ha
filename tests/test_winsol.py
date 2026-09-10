@@ -179,3 +179,47 @@ async def test_environment_sensors(
     presence = hass.states.get(_entity_id(hass, "binary_sensor", f"{prefix}-presence"))
     assert presence is not None
     assert presence.state == "on"
+
+
+def test_sensor_platform_detected_regardless_of_mode() -> None:
+    """Test that classification does not depend on the mode string.
+
+    Installations differ in how the mode is named, so a sensor platform
+    must be recognised by its controls alone.
+    """
+    unit = make_sensor_platform_unit()
+    unit.unitType.__dict__["mode"] = "DALI Sensor{Presence,Daylight}"
+    assert classify_unit(unit) is UnitKind.SENSOR_PLATFORM
+
+    unit.unitType.__dict__["mode"] = ""
+    assert classify_unit(unit) is UnitKind.SENSOR_PLATFORM
+
+
+async def test_sensor_entities_available_while_unit_offline(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that sensor platform entities ignore the unit online flag.
+
+    Sensor platforms are passive broadcasters and always report
+    online=False, which must not make their entities unavailable.
+    """
+    sensor_unit = make_sensor_platform_unit()
+    sensor_unit._online = False  # noqa: SLF001
+    mock_casambi.units = [make_light_unit(), sensor_unit]
+
+    await _setup(hass, mock_config_entry)
+
+    prefix = f"{mock_casambi.networkId}-unit-{SENSOR_PLATFORM_UUID}"
+    for domain, key in (
+        ("sensor", "wind"),
+        ("sensor", "illuminance"),
+        ("binary_sensor", "rain"),
+        ("binary_sensor", "presence"),
+        ("switch", "enable-34"),
+    ):
+        state = hass.states.get(_entity_id(hass, domain, f"{prefix}-{key}"))
+        assert state is not None
+        assert state.state != "unavailable", f"{domain}.{key} is unavailable"

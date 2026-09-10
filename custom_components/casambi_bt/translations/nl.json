@@ -94,6 +94,15 @@
             }
         },
         "switch": {
+            "light_sensor_enabled": {
+                "name": "Lichtsensor ingeschakeld"
+            },
+            "motion_sensor_enabled": {
+                "name": "Bewegingssensor ingeschakeld"
+            },
+            "rain_sensor_enabled": {
+                "name": "Regensensor ingeschakeld"
+            },
             "sun_tracking": {
                 "name": "Zonvolging"
             },
@@ -102,6 +111,9 @@
             },
             "weather_protection": {
                 "name": "Weerbescherming"
+            },
+            "wind_sensor_enabled": {
+                "name": "Windsensor ingeschakeld"
             }
         }
     },

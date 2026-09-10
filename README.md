@@ -50,7 +50,7 @@ Units are classified automatically by their control layout (`classify.py`) — m
 | Casambi scenes | `scene` entities |
 | **Winsol louvre motor** (Lamel) | `cover` (blind) with position 0–100% (= 0–142°) and **Stop**, plus the automation entities below |
 | **Winsol SO! screen** | `cover` (shade) with position and Stop |
-| **Sensor Platform V4** (weather option) | `sensor`: wind speed (km/h), solar radiation, illuminance (lx); `binary_sensor`: rain, motion, presence |
+| **Sensor Platform V4** (weather option) | `sensor`: wind speed (km/h), solar radiation, illuminance (lx); `binary_sensor`: rain, motion, presence; `switch`: per-element enables (wind/rain/light/motion) |
 | Wall switches / remotes (e.g. Xpress) | `event` entities per button (created on first press) + bus events |
 | Network | `binary_sensor` connectivity status |
 
@@ -74,6 +74,10 @@ Appears as a network-level **Weather protection** switch when a Sensor Platform 
 - **Wind ≥ threshold** (default 35 km/h) → all screens retract immediately. Latched with hysteresis; screens are **never re-extended automatically** — re-extend them yourself when the storm has passed.
 
 All switch states and dials survive HA restarts.
+
+### Sensor element enables
+
+The sensor platform exposes writable enable bits for its elements; these appear as four config switches on the sensor device (**Wind/Rain/Light/Motion sensor enabled**). They gate the element's reporting *and* the network's own use of it — **do not disable the rain sensor**, as that also disables the pergola's built-in rain protection. Note that enabling an element only produces data if the hardware element is physically fitted.
 
 ## Wall switch buttons
 

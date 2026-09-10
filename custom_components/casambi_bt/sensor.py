@@ -33,7 +33,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
-from .entities import CasambiUnitEntity, TypedEntityDescription
+from .entities import CasambiBroadcastUnitEntity, TypedEntityDescription
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class CasambiPacketSensor(CasambiUnitEntity, SensorEntity):
+class CasambiPacketSensor(CasambiBroadcastUnitEntity, SensorEntity):
     """A multiplexed environment reading of a Casambi sensor platform."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -119,7 +119,7 @@ class CasambiSolarSensor(CasambiPacketSensor):
         super().__init__(api, unit, "solar")
 
 
-class CasambiLuxSensor(CasambiUnitEntity, SensorEntity):
+class CasambiLuxSensor(CasambiBroadcastUnitEntity, SensorEntity):
     """The illuminance reading of a Casambi sensor platform."""
 
     _attr_device_class = SensorDeviceClass.ILLUMINANCE
