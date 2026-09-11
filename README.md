@@ -148,6 +148,10 @@ actions:
       message: "Wind {{ states('sensor.weather_station_wind_speed') }} km/h — screens retracted."
 ```
 
+## Connection handling
+
+Losing the BLE link is normal — the adapter gets busy, a proxy reboots, the pergola is at the far end of the garden. The integration reconnects on its own: a single background attempt retries with a delay that starts at 2 s and doubles up to 5 minutes, backs off to a minute while HA reports the network out of range, and stops to ask you for the password if it was changed. A command that fails on Bluetooth both reports the failure and triggers a reconnect, and all entities go unavailable (and come back) the moment the link changes, so the **Status** connectivity sensor always reflects reality.
+
 ## Diagnostics & debugging
 
 - **Diagnostics download** (integration page → ⋮ → *Download diagnostics*): the full network schema — every unit with its control table (types, bit offsets, ranges), parsed state, raw state bytes, and live sensor cache. Password is redacted automatically.

@@ -10,6 +10,42 @@ The integration is `local_push`: the `casambi-bt` library keeps a BLE connection
 
 The integration status against the Home Assistant [integration quality scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/) is tracked in `custom_components/casambi_bt/quality_scale.yaml`.
 
+## Connection handling
+
+A BLE mesh link drops often — the adapter is busy, the proxy reboots, the
+pergola is at the end of the garden — so losing the connection is normal
+operation, not an error.
+
+* **One reconnect task.** A disconnect callback from the library, or a
+  bluetooth advertisement for a network we are not connected to, calls
+  `_schedule_reconnect()`. It starts `CasambiApi.reconnect()` as a single
+  background task and never starts a second one while it runs, so
+  simultaneous triggers cannot stack up connection attempts.
+* **Exponential backoff.** The task retries with a delay that starts at
+  `RECONNECT_BACKOFF_START` (2 s) and doubles up to
+  `RECONNECT_BACKOFF_MAX` (5 min). When Home Assistant reports the device
+  as out of range the delay jumps to `RECONNECT_BACKOFF_NO_DEVICE` (60 s)
+  at once — retrying faster cannot help, and the bluetooth callback will
+  wake us as soon as the network advertises again.
+* **Failures that retrying cannot fix.** A `ProtocolError` is retried once
+  and then abandoned; an `AuthenticationError` (the network password was
+  changed) starts a reauth flow instead of looping.
+* **Writes trigger reconnects.** Entities reach the library through
+  `CasambiProxy`, which wraps every coroutine call: a `BluetoothError`
+  during a write means the link is gone before the library noticed, so a
+  reconnect is scheduled. Unlike upstream the error is re-raised, so the
+  failed command is still reported to the caller as a `HomeAssistantError`
+  rather than silently doing nothing.
+* **Entities follow the connection.** `CasambiApi` fans out connection
+  state changes to entities (`register_connection_updates`), so the
+  connectivity binary sensor and every entity's availability update the
+  moment the link drops or comes back, instead of waiting for the next
+  pushed unit state.
+* **Unloading wins.** `disconnect()` cancels a running reconnect task and
+  waits up to 5 s for it; once cancelled, no new reconnect is scheduled.
+
+Most of this is ported from upstream `dev`; see `tests/test_reconnect.py`.
+
 ## Decoded Winsol hardware
 
 Based on real fixture definitions and on protocol work by the
