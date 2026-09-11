@@ -30,6 +30,15 @@ DEFAULT_WIND_THRESHOLD: Final = 35
 
 EVENT_BUTTON: Final = f"{DOMAIN}_button_event"
 
+# Reconnect backoff, in seconds. The delay starts at START and is
+# multiplied by STEP after every failed attempt until it reaches MAX.
+# When Home Assistant reports the device as out of range the delay is
+# raised to NO_DEVICE at once, since retrying quickly cannot help.
+RECONNECT_BACKOFF_START: Final = 2
+RECONNECT_BACKOFF_STEP: Final = 2
+RECONNECT_BACKOFF_MAX: Final = 300
+RECONNECT_BACKOFF_NO_DEVICE: Final = 60
+
 
 def entry_option(entry: ConfigEntry, key: str, default: Any) -> Any:
     """Read a setting from entry options with fallback to entry data."""
