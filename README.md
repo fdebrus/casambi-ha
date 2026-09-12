@@ -51,10 +51,17 @@ Units are classified automatically by their control layout (`classify.py`) — m
 | Lights / LED (dimmer, RGB(W), tunable white, XY) | `light` entities, plus group lights |
 | Casambi scenes | `scene` entities |
 | **Winsol louvre motor** (Lamel) | `cover` (blind) with position 0–100% (= 0–142°) and **Stop**, plus the automation entities below |
-| **Winsol SO! screen** | `cover` (shade) with position and Stop |
+| **Winsol SO! screen** | `cover` (shade) with position and Stop — see the direction caveat below |
 | **Sensor Platform V4** (weather option) | `sensor`: wind speed (km/h), solar radiation, illuminance (lx); `binary_sensor`: rain, motion, presence; `switch`: per-element enables (wind/rain/light/motion) |
 | Wall switches / remotes (e.g. Xpress) | `event` entities per button (created on first press) + bus events |
 | Network | `binary_sensor` connectivity status |
+
+> [!CAUTION]
+> **The screen's open/close direction is unverified.** Another Winsol
+> installation reports that Casambi treats raw 0 as *open* and 255 as
+> *closed* for the SO! screen — the opposite of what this integration
+> assumes. If your screen extends when you ask it to open, that is why;
+> see `DEVELOPMENT.md` for the details and the fix.
 
 ## Demo mode
 
@@ -115,6 +122,25 @@ actions:
 ```
 
 Watch events live under *Developer Tools → Events → `casambi_bt_button_event`*.
+
+## Blueprints
+
+Three automation blueprints ship with the integration, in
+`blueprints/automation/casambi_bt/`. They need **Home Assistant 2026.7 or
+newer** (they use the `event.received` trigger) and are imported via
+*Settings → Automations & scenes → Blueprints → Import blueprint*, pasting
+the file's GitHub URL.
+
+| Blueprint | What it does |
+|---|---|
+| **Casambi button — custom actions** | Runs your own actions on press / short press / hold / release |
+| **Casambi button — pergola cover** | Short press toggles a louvre or screen open/closed, holding stops it mid-travel |
+| **Casambi button — toggle and dim** | Short press toggles a light, holding dims it until you let go |
+
+All three pick the button from a filtered entity picker, so no unit IDs or
+device IDs are involved. Note that a long press sends `press` first and
+`hold` only afterwards — put toggles on **short press** (which fires on
+release without a hold) if you want short and long to be exclusive.
 
 ## Example automations
 
