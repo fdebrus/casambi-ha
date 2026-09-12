@@ -1,0 +1,109 @@
+blueprint:
+  name: Casambi button — custom actions
+  description: >-
+    Run your own actions when a Casambi wall switch button is pressed, held or
+    released.
+
+    A long press always starts with a `press` event and only then sends `hold`,
+    so putting a toggle on "Pressed" makes it fire at the start of a long press
+    too. For exclusive short/long behaviour, use "Short press" (which fires on
+    release without a hold) and leave "Pressed" empty.
+  domain: automation
+  author: fdebrus
+  source_url: https://github.com/fdebrus/casambi-ha/blob/main/blueprints/automation/casambi_bt/button_actions.yaml
+  homeassistant:
+    min_version: "2026.7.0"
+  input:
+    button:
+      name: Button
+      description: >-
+        The Casambi button to react to. Button entities appear the first time
+        the button is pressed.
+      selector:
+        entity:
+          domain: event
+          integration: casambi_bt
+    actions:
+      name: Actions
+      icon: mdi:gesture-tap-button
+      input:
+        press_action:
+          name: Pressed
+          description: Runs the moment the button goes down — also at the start of a long press.
+          default: []
+          selector:
+            action: {}
+        short_press_action:
+          name: Short press
+          description: Runs on release when the button was not held.
+          default: []
+          selector:
+            action: {}
+        hold_action:
+          name: Hold started
+          description: Runs once the button has been held down.
+          default: []
+          selector:
+            action: {}
+        release_action:
+          name: Released after hold
+          description: Runs when a held button is let go.
+          default: []
+          selector:
+            action: {}
+
+# Button events arrive as a sequence (press → hold → release); queueing keeps
+# them in order instead of dropping the ones that arrive while a previous
+# action is still running.
+mode: queued
+max: 10
+max_exceeded: silent
+
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - press
+    id: press
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - release
+    id: release
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - hold
+    id: hold
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - release_after_hold
+    id: release_after_hold
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: press
+        sequence: !input press_action
+      - conditions:
+          - condition: trigger
+            id: release
+        sequence: !input short_press_action
+      - conditions:
+          - condition: trigger
+            id: hold
+        sequence: !input hold_action
+      - conditions:
+          - condition: trigger
+            id: release_after_hold
+        sequence: !input release_action

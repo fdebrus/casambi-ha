@@ -63,6 +63,57 @@ The rotating sensor packets are accumulated by the library in
 1 = wind (raw/4), 2 = solar (raw/4), 3 = PIR. Unit classification lives in
 `classify.py`.
 
+### Open question: is the screen position inverted?
+
+`CasambiScreenCover` maps the dimmer straight through — HA position 100
+(open) writes raw 255, position 0 (closed) writes raw 0. The
+[superkikim](https://github.com/superkikim/casambi-bt-hass) fork, which
+runs nine Winsol SO! V4.1 shutters on a live installation, documents the
+opposite convention: **raw 0 = open, raw 255 = closed**, and inverts in
+both directions (`100 - dimmer * 100 // 255` on read, `(100 - position) *
+255 // 100` on write).
+
+If that holds for this hardware too, our screen entity is inverted: asking
+it to close would open the screen. It is deliberately left as-is until it
+can be checked against a real unit — flipping it on someone else's report
+risks breaking the case that works. **This is the first thing to verify
+when hardware arrives**; the fix is three lines in `cover.py` plus the
+matching test in `tests/test_cover.py`.
+
+Note that the same fork also reports the Lamel as `EXT/1ch/Dim` with
+DIMMER + SLIDER, where the fixture definition used here has the Lamel
+Standard as `EXT/Elements` with SLIDER + ONOFF — so fixture layouts do
+vary between Winsol products and firmware revisions, and neither
+observation automatically generalises.
+
+### Winsol Lamel Intelligent (Star) — decoded, not implemented
+
+The Star pack's louvre motor is a different, richer fixture: 7 bytes of
+state instead of 5, exposing natively the intelligence this integration
+reimplements in Home Assistant for the Cosy pack. Decoded by
+[superkikim](https://github.com/superkikim/casambi-bt-hass) in
+`lamel_controls.py`:
+
+| Bits | Control | Meaning |
+|---|---|---|
+| 0–3 | sensorgroup header | read-only, selects which sensor is in the blob |
+| 4–27 | sensorgroupvalue | read-only, 24-bit rotating sensor blob |
+| 28–35 | DIMMER `$shadow` | shade/sun bias (0 = sun, 255 = shade) |
+| 36–43 | SLIDER `$pos` | louvre angle, 0–142° |
+| 44–51 | SLIDER `$temp` | Cool/Warm setpoint, 15–30 °C |
+| 52 | ONOFF `$auto` | automatic mode |
+| 53 | ONOFF `$intel` | intelligent mode |
+| 54 | ONOFF `$startstop` | open/close toggle |
+
+Nothing here is implemented: the Cosy pack ships the Lamel Standard, whose
+5-byte state has `$pos` at bits 28–35 and `$startstop` at bit 36 and no
+native automation at all — hence `suntrack.py` and the automation entities
+in `switch.py`. The map is recorded because a unit that turns out to have
+a 7-byte state is a Star, and then these controls should be exposed
+directly instead of driving it from Home Assistant. Its sensor-header
+mapping (which header carries the internal temperature) is an informed
+guess in that fork, not confirmed.
+
 ## Sun tracking
 
 Louvre units get a **Sun tracking** switch and a **Sun offset** number

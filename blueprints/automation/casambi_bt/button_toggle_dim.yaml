@@ -1,0 +1,139 @@
+blueprint:
+  name: Casambi button — toggle and dim
+  description: >-
+    Toggle a light with a short press and dim it by holding the button.
+
+    Dimming steps until you let go. Bind one button to "Brighter" and another
+    to "Dimmer" — a two-button rocker then behaves like a normal dimmer.
+  domain: automation
+  author: fdebrus
+  source_url: https://github.com/fdebrus/casambi-ha/blob/main/blueprints/automation/casambi_bt/button_toggle_dim.yaml
+  homeassistant:
+    min_version: "2026.7.0"
+  input:
+    button:
+      name: Button
+      description: >-
+        The Casambi button to react to. Button entities appear the first time
+        the button is pressed.
+      selector:
+        entity:
+          domain: event
+          integration: casambi_bt
+    target_light:
+      name: Light(s)
+      description: The light, or the area of lights, to control.
+      selector:
+        target:
+          entity:
+            domain: light
+    settings:
+      name: Dimming
+      icon: mdi:brightness-6
+      collapsed: true
+      input:
+        direction:
+          name: Direction
+          description: Which way holding the button moves the brightness.
+          default: up
+          selector:
+            select:
+              options:
+                - label: Brighter
+                  value: up
+                - label: Dimmer
+                  value: down
+        step_pct:
+          name: Step size
+          description: Brightness change per step.
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 50
+              unit_of_measurement: "%"
+              mode: slider
+        step_interval:
+          name: Step interval
+          description: Time between two steps while the button is held.
+          default: 0.4
+          selector:
+            number:
+              min: 0.1
+              max: 2
+              step: 0.1
+              unit_of_measurement: seconds
+              mode: slider
+        max_steps:
+          name: Maximum steps
+          description: >-
+            Safety stop for the dimming loop, in case the release event is
+            never delivered.
+          default: 40
+          selector:
+            number:
+              min: 1
+              max: 200
+              mode: box
+
+# restart is what stops the dimming: releasing the button retriggers the
+# automation, which cancels the loop still running from the hold.
+mode: restart
+
+variables:
+  step_pct: !input step_pct
+  step_interval: !input step_interval
+  max_steps: !input max_steps
+  direction: !input direction
+
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - release
+    id: short_press
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - hold
+    id: hold
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - release_after_hold
+    id: stop
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: short_press
+        sequence:
+          - action: light.toggle
+            target: !input target_light
+      - conditions:
+          - condition: trigger
+            id: hold
+        sequence:
+          - repeat:
+              count: "{{ max_steps }}"
+              sequence:
+                - action: light.turn_on
+                  target: !input target_light
+                  data:
+                    brightness_step_pct: >-
+                      {{ step_pct if direction == 'up' else -step_pct }}
+                - delay:
+                    seconds: "{{ step_interval }}"
+      # The release branch is deliberately empty: mode restart already
+      # cancelled the dimming loop by the time we get here.
+      - conditions:
+          - condition: trigger
+            id: stop
+        sequence: []

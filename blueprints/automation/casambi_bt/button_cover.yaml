@@ -1,0 +1,96 @@
+blueprint:
+  name: Casambi button — pergola cover
+  description: >-
+    Drive a pergola louvre, screen or blind from a Casambi wall switch button.
+
+    A short press toggles: the cover opens when it is below the threshold and
+    closes when it is above. Holding the button stops it wherever it is —
+    handy for parking the louvres at a partial angle.
+  domain: automation
+  author: fdebrus
+  source_url: https://github.com/fdebrus/casambi-ha/blob/main/blueprints/automation/casambi_bt/button_cover.yaml
+  homeassistant:
+    min_version: "2026.7.0"
+  input:
+    button:
+      name: Button
+      description: >-
+        The Casambi button to react to. Button entities appear the first time
+        the button is pressed.
+      selector:
+        entity:
+          domain: event
+          integration: casambi_bt
+    cover:
+      name: Cover
+      description: The louvre, screen or blind to control.
+      selector:
+        entity:
+          domain: cover
+    settings:
+      name: Settings
+      icon: mdi:cog
+      collapsed: true
+      input:
+        position_threshold:
+          name: Toggle threshold
+          description: >-
+            Above this position a short press closes the cover, below it opens.
+          default: 50
+          selector:
+            number:
+              min: 0
+              max: 100
+              unit_of_measurement: "%"
+              mode: slider
+
+# A stop must be able to interrupt a toggle that is still running.
+mode: restart
+
+variables:
+  cover_entity: !input cover
+  position_threshold: !input position_threshold
+
+triggers:
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - release
+    id: short_press
+  - trigger: event.received
+    target:
+      entity_id: !input button
+    options:
+      event_type:
+        - hold
+    id: hold
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: short_press
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: >-
+                      {{ state_attr(cover_entity, 'current_position') | int(0)
+                         > position_threshold }}
+                sequence:
+                  - action: cover.close_cover
+                    target:
+                      entity_id: !input cover
+            default:
+              - action: cover.open_cover
+                target:
+                  entity_id: !input cover
+      - conditions:
+          - condition: trigger
+            id: hold
+        sequence:
+          - action: cover.stop_cover
+            target:
+              entity_id: !input cover
