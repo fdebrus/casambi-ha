@@ -96,18 +96,6 @@ input, textarea, select { font: inherit; color: inherit; }
 }
 .btn-outline svg { width: 18px; height: 18px; }
 
-.partners {
-  background: var(--card-soft); border-bottom: 1px solid var(--line);
-  padding: 10px 16px; display: flex; align-items: center; justify-content: center; gap: 14px;
-}
-.partners .label { font-size: 0.8rem; letter-spacing: 0.12em; font-weight: 700; color: var(--muted); text-transform: uppercase; }
-.partners .logo {
-  background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; min-width: 150px; height: 52px;
-  display: flex; align-items: center; justify-content: center; font-weight: 800; color: #333; transition: opacity 0.4s;
-}
-.partners .logo img { max-height: 36px; max-width: 150px; }
-.partners .logo.fade { opacity: 0; }
-
 /* Layout */
 .view { padding: 16px; display: grid; gap: 14px; max-width: 720px; margin: 0 auto; }
 .card {

@@ -118,11 +118,6 @@ DEFAULT_EVENT = {
     "team_hcp_share": {"1": 1.0, "2": 0.25, "3": 0.1667, "4": 0.125, "5": 0.1},
     "min_drives_per_player": 3,
     "photographer_notice": True,
-    "partners": [
-        {"name": "Partenaire 1", "logo": ""},
-        {"name": "Partenaire 2", "logo": ""},
-        {"name": "Partenaire 3", "logo": ""},
-    ],
     "program": [
         {
             "time": "10:00",

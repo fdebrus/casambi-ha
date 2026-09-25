@@ -1,6 +1,6 @@
 window.I18N = {
   fr: {
-    live: "En direct", paused: "Pause", partners: "Nos partenaires", prizes_course: "Prix & Parcours",
+    live: "En direct", paused: "Pause", prizes_course: "Prix & Parcours",
     tab_leaderboard: "Classement", tab_card: "Carte", tab_feed: "Fil", water: "Eau",
     updated_at: "Mis à jour à {t}.", scoring_closed: "Le scoring est clôturé.", scoring_open: "Scoring ouvert.",
     program: "Programme de la journée", from: "dès", steps: "{n} étapes",
@@ -44,10 +44,9 @@ window.I18N = {
     notif_on: "Notifications activées pour les nouveaux messages.", notif_off: "Notifications désactivées.", notif_denied: "Notifications refusées par le navigateur.",
     new_posts: "{n} nouveau(x) message(s) sur le fil", load_error: "Connexion perdue, nouvelle tentative…", close: "Fermer",
     tie_note: "* départagé au countback",
-    partner_placeholder: "Logo",
   },
   en: {
-    live: "Live", paused: "Paused", partners: "Our partners", prizes_course: "Prizes & Course",
+    live: "Live", paused: "Paused", prizes_course: "Prizes & Course",
     tab_leaderboard: "Ranking", tab_card: "Card", tab_feed: "Feed", water: "Water",
     updated_at: "Updated at {t}.", scoring_closed: "Scoring is closed.", scoring_open: "Scoring is open.",
     program: "Programme of the day", from: "from", steps: "{n} steps",
@@ -91,6 +90,5 @@ window.I18N = {
     notif_on: "Notifications enabled for new feed posts.", notif_off: "Notifications disabled.", notif_denied: "Notifications blocked by the browser.",
     new_posts: "{n} new post(s) on the feed", load_error: "Connection lost, retrying…", close: "Close",
     tie_note: "* separated on countback",
-    partner_placeholder: "Logo",
   },
 };

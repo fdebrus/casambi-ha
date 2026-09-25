@@ -106,7 +106,6 @@
       <div class="field"><label>Notice photographe</label><select name="photographer_notice"><option value="1" ${e.photographer_notice ? "selected" : ""}>Oui</option><option value="0" ${!e.photographer_notice ? "selected" : ""}>Non</option></select></div>
       ${f("min_drives_per_player", "Drives minimum par joueur", "number")}
       </div>
-      ${ta("partners", "Partenaires (JSON : [{name, logo}])")}
       ${ta("program", "Programme (JSON : [{time, fr, en}])")}
       ${ta("team_hcp_share", "Part du total des handicaps → handicap d'équipe, par nombre de joueurs (JSON)")}
       ${ta("rookie_stations", "Ateliers rookies (JSON liste)")}
@@ -115,7 +114,7 @@
     $("#ev-form").addEventListener("submit", (ev) => { ev.preventDefault(); run(async () => {
       const fd = new FormData(ev.target); const body = {};
       for (const [k, v] of fd.entries()) {
-        if (["partners", "program", "team_hcp_share", "rookie_stations"].includes(k)) body[k] = JSON.parse(v);
+        if (["program", "team_hcp_share", "rookie_stations"].includes(k)) body[k] = JSON.parse(v);
         else if (["live", "photographer_notice"].includes(k)) body[k] = v === "1";
         else if (k === "min_drives_per_player") body[k] = +v;
         else body[k] = v;

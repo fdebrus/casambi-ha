@@ -16,7 +16,7 @@ front-end (no build step), one admin page.
 | **Carte** | Flight PIN login (works on any number of phones), one card per hole with a stroke stepper, drive-used chips, live points, and prize sign declaration (longest drive, nearest to pin) on the relevant hole. Read-only once scoring is closed. |
 | **Rookies** | Intro text and a station-points ranking for the beginners' clinic. |
 | **Fil** | Photo + text posts with replies and four reactions (Bravo, Feu, Rire, Beau coup), automatic posts for birdies / eagles / hole-in-one, prize signs and the final result, unread badge, optional browser notifications. |
-| Header | Live badge, FR/EN, light/dark theme, "Prix & Parcours" (prizes with current sign holders + course card), rotating partner logos. |
+| Header | Live badge, FR/EN, light/dark theme, "Prix & Parcours" (prizes with current sign holders + course card). |
 | Floating buttons | **Marshal** and **Eau** requests, queued for the organisers with flight and hole. |
 | `/admin` | Event settings, course (par / stroke index / length), flights & players with PINs, score corrections, prizes, rookies, feed moderation, requests queue, JSON import/export, reset tools. |
 
@@ -64,7 +64,7 @@ Environment variables: `GOLF_ADMIN_TOKEN` (required in production),
 1. Admin → **Parcours**: enter the real par, stroke index and length of
    each hole (the defaults are placeholders; only the pars visible on the
    reference scorecard were copied).
-2. Admin → **Événement**: title, date, course, partners' logo URLs,
+2. Admin → **Événement**: title, date, course,
    programme, texts.
 3. Admin → **Flights** or **Outils → Importer**: flights, players,
    handicaps, start holes. Print each flight's PIN on its registration card.

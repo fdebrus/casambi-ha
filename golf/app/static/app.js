@@ -94,19 +94,6 @@
     $("#btn-theme").innerHTML = svg(effectiveTheme() === "dark" ? "i-moon" : "i-sun");
   }
 
-  // partners carousel
-  let partnerIdx = 0;
-  function renderPartner(animate) {
-    const list = (S.state?.event?.partners || []).filter((p) => p.name || p.logo);
-    const box = $("#partner-logo");
-    $("#partners").classList.toggle("hidden", list.length === 0);
-    if (!list.length) return;
-    const p = list[partnerIdx % list.length];
-    const html = p.logo ? `<img src="${esc(p.logo)}" alt="${esc(p.name)}">` : `<span>${esc(p.name)}</span>`;
-    if (animate) { box.classList.add("fade"); setTimeout(() => { box.innerHTML = html; box.classList.remove("fade"); }, 400); }
-    else box.innerHTML = html;
-  }
-  setInterval(() => { partnerIdx++; renderPartner(true); }, 4000);
 
   function effectiveTheme() {
     if (S.theme === "auto") return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -547,7 +534,7 @@
 
   // ---------- events ----------
   $$(".nav button").forEach((b) => b.addEventListener("click", () => setTab(b.dataset.tab)));
-  $("#btn-lang").addEventListener("click", () => { S.lang = S.lang === "fr" ? "en" : "fr"; store.set("lang", S.lang); renderAll(); renderPartner(false); });
+  $("#btn-lang").addEventListener("click", () => { S.lang = S.lang === "fr" ? "en" : "fr"; store.set("lang", S.lang); renderAll(); });
   $("#btn-theme").addEventListener("click", () => { S.theme = effectiveTheme() === "dark" ? "light" : "dark"; store.set("theme", S.theme); applyTheme(); renderHeader(); });
   $("#btn-bell").addEventListener("click", toggleNotif);
   $("#btn-prizes").addEventListener("click", openPrizes);
@@ -569,6 +556,6 @@
   if (!["leaderboard", "card", "rookies", "feed"].includes(S.tab)) S.tab = "leaderboard";
   $$(".nav button").forEach((b) => b.classList.toggle("on", b.dataset.tab === S.tab));
   ["leaderboard", "card", "rookies", "feed"].forEach((v) => $("#view-" + v).classList.toggle("hidden", v !== S.tab));
-  refresh(false).then(() => renderPartner(false));
+  refresh(false);
   setInterval(() => refresh(true), 15000);
 })();
