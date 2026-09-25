@@ -1,0 +1,14 @@
+# The golf app reuses the repository's ruff rules but is a standalone
+# FastAPI service, not a Home Assistant integration.
+extend = "../ruff.toml"
+target-version = "py311"
+
+[lint]
+extend-ignore = [
+    "D1",      # docstrings on every function/class are not required here
+    "INP001",  # tests/ is intentionally not a package
+    "ASYNC240",# small upload written to disk inside the request handler
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["S101", "PLR2004", "E402"]

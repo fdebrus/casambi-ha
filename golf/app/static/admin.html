@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Golf Day · Admin</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<style>
+  body { padding-bottom: 40px; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; }
+  .tabs button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 8px 14px; font-weight: 700; color: var(--text); }
+  .tabs button.on { background: var(--primary); color: #fff; border-color: var(--primary); }
+  table.adm { width: 100%; border-collapse: collapse; font-size: 0.95rem; }
+  table.adm th, table.adm td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: left; vertical-align: top; }
+  table.adm input, table.adm select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 6px; background: var(--card); }
+  table.adm input.w4 { width: 4.5em; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 16px; }
+  .field { margin: 6px 0; }
+  .field input, .field textarea, .field select { padding: 8px; font-size: 1rem; }
+  .field textarea { min-height: 70px; font-family: ui-monospace, monospace; font-size: 0.9rem; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .req { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .req.done { opacity: 0.5; }
+  .scores-grid td { text-align: center; padding: 2px; }
+  .scores-grid input { width: 2.8em; text-align: center; }
+  .ok { color: var(--success); font-weight: 700; }
+  .warn { background: var(--gold-soft); border: 1px solid var(--gold); border-radius: 10px; padding: 8px 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="row"><h1 class="grow" style="margin:0">Golf Day · Admin</h1><a href="/">← App</a></div>
+  <div id="login" class="card hidden">
+    <h2>Admin token</h2>
+    <form id="login-form"><div class="field"><input id="token" type="password" placeholder="GOLF_ADMIN_TOKEN" required></div><button class="btn">Entrer</button></form>
+    <div class="error hidden" id="login-error">Token refusé.</div>
+  </div>
+  <div id="app" class="hidden">
+    <div class="warn hidden" id="default-token-warn">Le token admin est celui par défaut (<code>golf-admin</code>). Définissez <code>GOLF_ADMIN_TOKEN</code> avant le jour J.</div>
+    <div class="tabs" id="tabs">
+      <button data-t="requests" class="on">Demandes <span id="req-count"></span></button>
+      <button data-t="event">Événement</button>
+      <button data-t="flights">Flights</button>
+      <button data-t="scores">Scores</button>
+      <button data-t="course">Parcours</button>
+      <button data-t="prizes">Prix</button>
+      <button data-t="rookies">Rookies</button>
+      <button data-t="feed">Fil</button>
+      <button data-t="tools">Outils</button>
+    </div>
+    <div id="panel" class="card"></div>
+  </div>
+</div>
+<script>
+(() => {
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let token = localStorage.getItem("golf.admin") || "";
+  let D = null, tab = "requests";
+  const api = async (path, opts = {}) => {
+    const init = { method: opts.method || "GET", headers: { "X-Admin-Token": token } };
+    if (opts.json !== undefined) { init.headers["Content-Type"] = "application/json"; init.body = JSON.stringify(opts.json); }
+    const r = await fetch(path, init);
+    if (r.status === 401) { localStorage.removeItem("golf.admin"); token = ""; showLogin(); throw new Error("unauthorized"); }
+    if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail || d; } catch {} throw new Error(typeof d === "string" ? d : JSON.stringify(d)); }
+    return r.json();
+  };
+  const toast = (m) => { const el = document.createElement("div"); el.className = "toast"; el.textContent = m; document.body.appendChild(el); setTimeout(() => el.remove(), 2200); };
+  const run = async (fn) => { try { await fn(); await load(); toast("OK"); } catch (e) { alert("Erreur : " + e.message); } };
+  const fmt = (iso) => iso ? new Date(iso).toLocaleTimeString("fr-BE", { hour: "2-digit", minute: "2-digit" }) : "";
+
+  function showLogin() { $("#login").classList.remove("hidden"); $("#app").classList.add("hidden"); }
+  $("#login-form").addEventListener("submit", async (e) => { e.preventDefault(); token = $("#token").value.trim(); try { await api("/api/admin/overview"); localStorage.setItem("golf.admin", token); $("#login-error").classList.add("hidden"); load(); } catch { $("#login-error").classList.remove("hidden"); } });
+  $$("#tabs button").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.t; $$("#tabs button").forEach((x) => x.classList.toggle("on", x === b)); render(); }));
+
+  async function load() {
+    if (!token) return showLogin();
+    try { D = await api("/api/admin/overview"); } catch { return; }
+    $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
+    $("#default-token-warn").classList.toggle("hidden", !D.admin_token_is_default);
+    const open = D.requests.filter((r) => r.status === "open").length;
+    $("#req-count").textContent = open ? `(${open})` : "";
+    render();
+  }
+
+  function render() { ({ requests, event, flights, scores, course, prizes, rookies, feed, tools })[tab](); }
+
+  function requests() {
+    const rows = D.requests.map((r) => `<div class="req ${r.status}"><b>${r.kind === "marshal" ? "🧑‍✈️ Marshal" : "💧 Eau"}</b><span class="grow">${esc(r.flight_name || "?")} · trou ${r.hole ?? "?"} ${r.note ? "· " + esc(r.note) : ""}<br><span class="muted small">${fmt(r.created_at)}${r.done_at ? " → " + fmt(r.done_at) : ""}</span></span>
+      <button class="btn small ${r.status === "done" ? "ghost" : ""}" data-req="${r.id}" data-status="${r.status === "done" ? "open" : "done"}">${r.status === "done" ? "Rouvrir" : "Fait"}</button></div>`).join("");
+    $("#panel").innerHTML = `<h2>Demandes marshal / eau</h2><p class="muted small">Rafraîchi toutes les 15 s.</p>${rows || "<p class='muted'>Aucune demande.</p>"}`;
+    $$("[data-req]").forEach((b) => b.addEventListener("click", () => run(() => api(`/api/admin/requests/${b.dataset.req}`, { method: "PUT", json: { status: b.dataset.status } }))));
+  }
+
+  function event() {
+    const e = D.event;
+    const f = (k, label, type = "text") => `<div class="field"><label>${label}</label><input name="${k}" type="${type}" value="${esc(e[k] ?? "")}"></div>`;
+    const ta = (k, label) => `<div class="field"><label>${label}</label><textarea name="${k}">${esc(typeof e[k] === "string" ? e[k] : JSON.stringify(e[k], null, 1))}</textarea></div>`;
+    $("#panel").innerHTML = `<h2>Événement</h2><form id="ev-form"><div class="grid2">
+      ${f("title", "Titre")}${f("date", "Date", "date")}${f("course_name", "Parcours")}${f("org_name", "Organisation")}${f("org_logo", "URL logo organisation")}
+      <div class="field"><label>Scoring</label><select name="status"><option value="open" ${e.status === "open" ? "selected" : ""}>Ouvert</option><option value="closed" ${e.status === "closed" ? "selected" : ""}>Clôturé</option></select></div>
+      <div class="field"><label>Badge "En direct"</label><select name="live"><option value="1" ${e.live ? "selected" : ""}>Oui</option><option value="0" ${!e.live ? "selected" : ""}>Non</option></select></div>
+      <div class="field"><label>Notice photographe</label><select name="photographer_notice"><option value="1" ${e.photographer_notice ? "selected" : ""}>Oui</option><option value="0" ${!e.photographer_notice ? "selected" : ""}>Non</option></select></div>
+      ${f("min_drives_per_player", "Drives minimum par joueur", "number")}
+      </div>
+      ${ta("partners", "Partenaires (JSON : [{name, logo}])")}
+      ${ta("program", "Programme (JSON : [{time, fr, en}])")}
+      ${ta("team_hcp_share", "Part du total des handicaps → handicap d'équipe, par nombre de joueurs (JSON)")}
+      ${ta("rookie_stations", "Ateliers rookies (JSON liste)")}
+      <div class="grid2">${ta("how_it_works_fr", "Comment ça marche (FR)")}${ta("how_it_works_en", "How it works (EN)")}${ta("rookies_intro_fr", "Intro rookies (FR)")}${ta("rookies_intro_en", "Rookies intro (EN)")}</div>
+      <button class="btn">Enregistrer</button></form>`;
+    $("#ev-form").addEventListener("submit", (ev) => { ev.preventDefault(); run(async () => {
+      const fd = new FormData(ev.target); const body = {};
+      for (const [k, v] of fd.entries()) {
+        if (["partners", "program", "team_hcp_share", "rookie_stations"].includes(k)) body[k] = JSON.parse(v);
+        else if (["live", "photographer_notice"].includes(k)) body[k] = v === "1";
+        else if (k === "min_drives_per_player") body[k] = +v;
+        else body[k] = v;
+      }
+      await api("/api/admin/event", { method: "PUT", json: body });
+    }); });
+  }
+
+  function flights() {
+    const rows = D.flights.map((f) => `<tr data-fid="${f.id}"><td><input name="name" value="${esc(f.name)}"></td><td><input name="pin" value="${esc(f.pin)}" class="w4"></td><td><input name="start_hole" type="number" min="1" max="18" value="${f.start_hole}" class="w4"></td>
+      <td><input name="team_hcp_override" type="number" placeholder="${f.team_hcp}" title="Laisser vide = calcul automatique (${f.team_hcp})" value="${f.team_hcp_override ?? ""}" class="w4"></td><td><input name="sort_order" type="number" value="${D.flights.indexOf(f)}" class="w4"></td>
+      <td class="actions"><button class="btn small" data-save-f>OK</button><button class="btn small danger" data-del-f>✕</button></td></tr>
+      <tr><td colspan="6" style="padding-left:20px"><table class="adm">${f.players.map((p) => `<tr data-pid="${p.id}"><td><input name="first_name" value="${esc(p.first_name)}" placeholder="Prénom"></td><td><input name="last_name" value="${esc(p.last_name)}" placeholder="Nom"></td><td><input name="handicap" type="number" step="0.1" value="${p.handicap ?? ""}" class="w4" placeholder="hcp"></td><td class="actions"><button class="btn small" data-save-p>OK</button><button class="btn small danger" data-del-p>✕</button></td></tr>`).join("")}
+      <tr data-new-p="${f.id}"><td><input name="first_name" placeholder="Prénom"></td><td><input name="last_name" placeholder="Nom"></td><td><input name="handicap" type="number" step="0.1" class="w4" placeholder="hcp"></td><td><button class="btn small secondary" data-add-p>+ joueur</button></td></tr></table></td></tr>`).join("");
+    $("#panel").innerHTML = `<h2>Flights</h2><div class="scorecard-wrap"><table class="adm"><tr><th>Nom</th><th>PIN</th><th>Départ</th><th>Hcp équipe</th><th>Ordre</th><th></th></tr>${rows}
+      <tr data-new-f><td><input name="name" placeholder="Flight XI"></td><td><input name="pin" class="w4" placeholder="auto"></td><td><input name="start_hole" type="number" value="1" class="w4"></td><td><input name="team_hcp_override" type="number" class="w4"></td><td><input name="sort_order" type="number" value="${D.flights.length}" class="w4"></td><td><button class="btn small secondary" data-add-f>+ flight</button></td></tr></table></div>`;
+    const read = (tr) => { const o = {}; $$("input", tr).forEach((i) => { o[i.name] = i.type === "number" ? (i.value === "" ? null : +i.value) : i.value; }); return o; };
+    $$("[data-save-f]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); run(() => api(`/api/admin/flights/${tr.dataset.fid}`, { method: "PUT", json: read(tr) })); }));
+    $$("[data-del-f]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); if (confirm("Supprimer ce flight et ses scores ?")) run(() => api(`/api/admin/flights/${tr.dataset.fid}`, { method: "DELETE" })); }));
+    $("[data-add-f]").addEventListener("click", () => { const tr = $("[data-new-f]"); run(() => api("/api/admin/flights", { method: "POST", json: read(tr) })); });
+    $$("[data-save-p]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); const fid = +tr.closest("[data-fid]") ? 0 : 0; const flight = D.flights.find((f) => f.players.some((p) => p.id === +tr.dataset.pid)); run(() => api(`/api/admin/players/${tr.dataset.pid}`, { method: "PUT", json: { ...read(tr), flight_id: flight.id } })); }));
+    $$("[data-del-p]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); run(() => api(`/api/admin/players/${tr.dataset.pid}`, { method: "DELETE" })); }));
+    $$("[data-add-p]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); run(() => api("/api/admin/players", { method: "POST", json: { ...read(tr), flight_id: +tr.dataset.newP } })); }));
+  }
+
+  function scores() {
+    const rows = D.flights.map((f) => `<tr data-fid="${f.id}"><th>${esc(f.name)}<br><span class="muted small">${f.score.net_total} net · ${f.score.gross_total} brut</span></th>${f.score.holes.map((h) => `<td><input data-hole="${h.hole}" type="number" min="1" max="20" value="${h.strokes ?? ""}" title="Par ${h.par}"></td>`).join("")}</tr>`).join("");
+    $("#panel").innerHTML = `<h2>Scores (correction organisateur)</h2><p class="muted small">Modifier une case l'enregistre immédiatement. Vider la case efface le score. Le joueur du drive n'est pas modifié ici.</p>
+      <div class="scorecard-wrap"><table class="adm scores-grid"><tr><th></th>${D.holes.map((h) => `<th>${h.number}<br><span class="muted small">p${h.par}</span></th>`).join("")}</tr>${rows}</table></div>`;
+    $$(".scores-grid input").forEach((i) => i.addEventListener("change", () => { const fid = i.closest("tr").dataset.fid; const f = D.flights.find((x) => x.id === +fid); const h = f.score.holes[+i.dataset.hole - 1];
+      run(() => api(`/api/admin/scores/${fid}/${i.dataset.hole}`, { method: "PUT", json: { strokes: i.value === "" ? null : +i.value, drive_player_id: h.drive_player_id } })); }));
+  }
+
+  function course() {
+    $("#panel").innerHTML = `<h2>Parcours</h2><form id="course-form"><div class="scorecard-wrap"><table class="adm"><tr><th>Trou</th><th>Par</th><th>Stroke index</th><th>Longueur (m)</th></tr>
+      ${D.holes.map((h) => `<tr data-n="${h.number}"><td>${h.number}</td><td><input name="par" type="number" min="3" max="6" value="${h.par}" class="w4"></td><td><input name="stroke_index" type="number" min="1" max="18" value="${h.stroke_index}" class="w4"></td><td><input name="length_m" type="number" value="${h.length_m ?? ""}" class="w4"></td></tr>`).join("")}</table></div><button class="btn">Enregistrer</button></form>`;
+    $("#course-form").addEventListener("submit", (e) => { e.preventDefault(); run(() => api("/api/admin/holes", { method: "PUT", json: $$("tr[data-n]").map((tr) => ({ number: +tr.dataset.n, par: +$("[name=par]", tr).value, stroke_index: +$("[name=stroke_index]", tr).value, length_m: $("[name=length_m]", tr).value === "" ? null : +$("[name=length_m]", tr).value })) })); });
+  }
+
+  function prizes() {
+    const flightOpts = (sel) => `<option value="">—</option>` + D.flights.map((f) => `<option value="${f.id}" ${sel === f.id ? "selected" : ""}>${esc(f.name)}</option>`).join("");
+    const row = (p, isNew) => `<tr ${isNew ? "data-new-pr" : `data-prid="${p.id}"`}><td><select name="kind"><option value="longest_drive" ${p.kind === "longest_drive" ? "selected" : ""}>Longest drive</option><option value="nearest_pin" ${p.kind === "nearest_pin" ? "selected" : ""}>Nearest to pin</option><option value="custom" ${p.kind === "custom" ? "selected" : ""}>Autre</option></select></td>
+      <td><input name="hole" type="number" min="1" max="18" value="${p.hole ?? ""}" class="w4"></td><td><input name="title_fr" value="${esc(p.title_fr)}"><input name="title_en" value="${esc(p.title_en)}"></td><td><input name="description_fr" value="${esc(p.description_fr)}"><input name="description_en" value="${esc(p.description_en)}"></td>
+      <td><select name="claimable"><option value="1" ${p.claimable ? "selected" : ""}>Pancarte</option><option value="0" ${!p.claimable ? "selected" : ""}>Non</option></select></td><td><input name="sort_order" type="number" value="${p.sort_order ?? 0}" class="w4"></td>
+      <td class="actions">${isNew ? `<button class="btn small secondary" data-add-pr>+</button>` : `<button class="btn small" data-save-pr>OK</button><button class="btn small danger" data-del-pr>✕</button>`}</td></tr>
+      ${isNew ? "" : `<tr><td colspan="7" style="padding-left:20px" class="actions">Pancarte : <input name="holder_name" data-holder="${p.id}" value="${esc(p.holder_name ?? "")}" placeholder="Nom" style="max-width:220px"> <select data-holder-f="${p.id}">${flightOpts(p.holder_flight_id)}</select> <button class="btn small" data-set-holder="${p.id}">Attribuer</button></td></tr>`}`;
+    $("#panel").innerHTML = `<h2>Prix</h2><div class="scorecard-wrap"><table class="adm"><tr><th>Type</th><th>Trou</th><th>Titre FR / EN</th><th>Description FR / EN</th><th>Déclarable</th><th>Ordre</th><th></th></tr>${D.prizes.map((p) => row(p, false)).join("")}${row({ kind: "custom", title_fr: "", title_en: "", description_fr: "", description_en: "", claimable: 1, sort_order: D.prizes.length }, true)}</table></div>`;
+    const read = (tr) => { const o = {}; $$("input,select", tr).forEach((i) => { if (i.name) o[i.name] = i.name === "hole" || i.name === "sort_order" ? (i.value === "" ? null : +i.value) : i.name === "claimable" ? i.value === "1" : i.value; }); return o; };
+    $$("[data-save-pr]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); run(() => api(`/api/admin/prizes/${tr.dataset.prid}`, { method: "PUT", json: read(tr) })); }));
+    $$("[data-del-pr]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); if (confirm("Supprimer ?")) run(() => api(`/api/admin/prizes/${tr.dataset.prid}`, { method: "DELETE" })); }));
+    $("[data-add-pr]").addEventListener("click", () => run(() => api("/api/admin/prizes", { method: "POST", json: read($("[data-new-pr]")) })));
+    $$("[data-set-holder]").forEach((b) => b.addEventListener("click", () => { const id = b.dataset.setHolder; const name = $(`[data-holder="${id}"]`).value.trim(); const fid = $(`[data-holder-f="${id}"]`).value; run(() => api(`/api/admin/prizes/${id}/holder`, { method: "PUT", json: { holder_name: name || null, holder_flight_id: fid ? +fid : null } })); }));
+  }
+
+  function rookies() {
+    const st = D.event.rookie_stations || [];
+    const rows = D.rookies.map((r) => `<tr data-pid="${r.id}"><td><input name="first_name" value="${esc(r.first_name)}"></td><td><input name="last_name" value="${esc(r.last_name)}"></td>${st.map((s) => `<td><input type="number" min="0" data-station="${esc(s)}" value="${r.stations[s] ?? ""}" class="w4"></td>`).join("")}<td><b>${r.total}</b></td><td class="actions"><button class="btn small" data-save-r>OK</button><button class="btn small danger" data-del-r>✕</button></td></tr>`).join("");
+    $("#panel").innerHTML = `<h2>Rookies</h2><p class="muted small">Les points d'atelier s'enregistrent dès la modification. Les ateliers se configurent dans l'onglet Événement.</p>
+      <div class="scorecard-wrap"><table class="adm"><tr><th>Prénom</th><th>Nom</th>${st.map((s) => `<th>${esc(s)}</th>`).join("")}<th>Total</th><th></th></tr>${rows}
+      <tr data-new-r><td><input name="first_name" placeholder="Prénom"></td><td><input name="last_name" placeholder="Nom"></td><td colspan="${st.length + 2}"><button class="btn small secondary" data-add-r>+ rookie</button></td></tr></table></div>`;
+    $$("[data-station]").forEach((i) => i.addEventListener("change", () => run(() => api("/api/admin/rookie_scores", { method: "PUT", json: { player_id: +i.closest("tr").dataset.pid, station: i.dataset.station, points: +i.value || 0 } }))));
+    $$("[data-save-r]").forEach((b) => b.addEventListener("click", () => { const tr = b.closest("tr"); run(() => api(`/api/admin/players/${tr.dataset.pid}`, { method: "PUT", json: { first_name: $("[name=first_name]", tr).value, last_name: $("[name=last_name]", tr).value, rookie: true, flight_id: null } })); }));
+    $$("[data-del-r]").forEach((b) => b.addEventListener("click", () => run(() => api(`/api/admin/players/${b.closest("tr").dataset.pid}`, { method: "DELETE" }))));
+    $("[data-add-r]").addEventListener("click", () => { const tr = $("[data-new-r]"); run(() => api("/api/admin/players", { method: "POST", json: { first_name: $("[name=first_name]", tr).value, last_name: $("[name=last_name]", tr).value, rookie: true, flight_id: null } })); });
+  }
+
+  function feed() {
+    const all = D.posts.flatMap((p) => [p, ...p.replies.map((r) => ({ ...r, isReply: true }))]);
+    $("#panel").innerHTML = `<h2>Fil</h2><form id="info-form" class="row"><input class="grow" name="text" placeholder="Message d'information des organisateurs…" required style="padding:10px;border:1px solid var(--line);border-radius:10px"><button class="btn small">Publier</button></form>
+      <table class="adm" style="margin-top:12px">${all.map((p) => `<tr class="${p.hidden ? "muted" : ""}"><td>${p.isReply ? "↳ " : ""}<b>${esc(p.author_name)}</b> <span class="muted small">${fmt(p.created_at)} · ${esc(p.kind)}</span><br>${esc(p.text)}${p.image ? ` <a href="/uploads/${esc(p.image)}" target="_blank">📷</a>` : ""}</td><td><button class="btn small ${p.hidden ? "secondary" : "ghost"}" data-hide="${p.id}" data-val="${p.hidden ? 0 : 1}">${p.hidden ? "Afficher" : "Masquer"}</button></td></tr>`).join("")}</table>`;
+    $("#info-form").addEventListener("submit", (e) => { e.preventDefault(); run(() => api("/api/admin/posts", { method: "POST", json: { text: e.target.text.value } })); });
+    $$("[data-hide]").forEach((b) => b.addEventListener("click", () => run(() => api(`/api/admin/posts/${b.dataset.hide}`, { method: "PUT", json: { hidden: b.dataset.val === "1" } }))));
+  }
+
+  function tools() {
+    $("#panel").innerHTML = `<h2>Outils</h2>
+      <h3>Import / export des flights</h3><p class="muted small">Format : {"flights":[{"name","pin","start_hole","players":[{"first_name","last_name","handicap"}]}],"rookies":[{"first_name","last_name"}]}. L'import remplace tous les flights et joueurs.</p>
+      <div class="field"><textarea id="import-json" style="min-height:160px"></textarea></div>
+      <div class="actions"><button class="btn small secondary" id="btn-export">Exporter dans la zone</button><button class="btn small" id="btn-import">Importer (remplace tout)</button></div>
+      <h3>Remise à zéro avant le jour J</h3>
+      <div class="actions"><button class="btn small danger" data-reset="scores">Effacer les scores + posts auto + pancartes</button><button class="btn small danger" data-reset="feed">Effacer les posts des joueurs</button><button class="btn small danger" data-reset="requests">Effacer les demandes</button></div>`;
+    $("#btn-export").addEventListener("click", async () => { $("#import-json").value = JSON.stringify(await api("/api/admin/export"), null, 2); });
+    $("#btn-import").addEventListener("click", () => { if (confirm("Remplacer tous les flights et joueurs ?")) run(() => api("/api/admin/import", { method: "POST", json: JSON.parse($("#import-json").value) })); });
+    $$("[data-reset]").forEach((b) => b.addEventListener("click", () => { if (confirm("Confirmer : " + b.textContent + " ?")) run(() => api("/api/admin/reset", { method: "POST", json: { [b.dataset.reset]: true } })); }));
+  }
+
+  load();
+  setInterval(() => { if (tab === "requests" && token) load(); }, 15000);
+})();
+</script>
+</body>
+</html>

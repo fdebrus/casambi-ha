@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e5aa8">
+<title>Golf Day</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icon.svg">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+    <symbol id="i-flag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V3"/><path d="M5 4c4-2 8 2 12 0v9c-4 2-8-2-12 0"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="3" y="10" width="5" height="10"/><rect x="9.5" y="4" width="5" height="16"/><rect x="16" y="13" width="5" height="7"/></symbol>
+    <symbol id="i-card" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="7" r="4"/><path d="M12 11v10M8 21h8"/></symbol>
+    <symbol id="i-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1-5A8 8 0 1 1 21 12z"/><path d="M8 11h8M8 14h5"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+    <symbol id="i-trophy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0z"/><path d="M7 6H4a3 3 0 0 0 3 5M17 6h3a3 3 0 0 1-3 5"/></symbol>
+    <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="13" height="14" rx="2"/><path d="M3 15l4-4 4 4 3-3 2 2"/><circle cx="8" cy="9" r="1.2"/><path d="M18 3h3v7l-2-1.5L17 10V3z"/></symbol>
+    <symbol id="i-clap" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11l-2-2a1.5 1.5 0 0 1 2-2l5 5"/><path d="M9 8L6 5a1.5 1.5 0 0 1 2-2l5 5"/><path d="M12 8l-1-1a1.5 1.5 0 0 1 2-2l4 4a6 6 0 0 1-8 9l-4-4a1.5 1.5 0 0 1 2-2"/><path d="M16 3l1-1M19 5l1.5-.5"/></symbol>
+    <symbol id="i-fire" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a6 6 0 0 0 6-6c0-4-3-5-3-9-2 1-3 3-3 5-1-1-2-2-2-4-3 2-4 5-4 8a6 6 0 0 0 6 6z"/></symbol>
+    <symbol id="i-laugh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 3 4 3 4-3 4-3zM9 9h.01M15 9h.01"/></symbol>
+    <symbol id="i-shot" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="8" r="5"/><path d="M12 13v7M9 20h6"/><path d="M10 7h.01M13 6h.01M12 9h.01"/></symbol>
+    <symbol id="i-marshal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="6" r="3"/><path d="M8 5h8"/><path d="M12 10v6M12 16l-3 5M12 16l3 5M12 11l-4 3M12 11l4 3"/></symbol>
+    <symbol id="i-bottle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2h4v3l2 3v12a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V8l2-3z"/><path d="M8 13h8M8 17h8"/></symbol>
+    <symbol id="i-bird" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 54h44"/><path d="M28 48v6M36 48v6"/><path d="M14 34c0-11 9-19 20-19 8 0 14 4 18 10l6-1-5 6c0 11-9 18-19 18S14 45 14 34z"/><path d="M26 27c6-6 14-6 18-2-4 6-12 8-18 2z"/><circle cx="46" cy="27" r="1.5" fill="currentColor"/></symbol>
+    <symbol id="i-laurel" viewBox="0 0 84 66" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M30 60c-10-4-18-14-18-26 0-6 2-12 5-16"/><path d="M12 30c4-1 8 1 10 5-4 1-8-1-10-5zM10 40c4-2 9 0 11 4-4 2-9 0-11-4zM13 50c4-2 9-1 11 3-4 2-9 1-11-3zM17 20c4-1 7 2 8 6-4 1-7-2-8-6z"/><path d="M54 60c10-4 18-14 18-26 0-6-2-12-5-16"/><path d="M72 30c-4-1-8 1-10 5 4 1 8-1 10-5zM74 40c-4-2-9 0-11 4 4 2 9 0 11-4zM71 50c-4-2-9-1-11 3 4 2 9 1 11-3zM67 20c-4-1-7 2-8 6 4 1 7-2 8-6z"/></symbol>
+    <symbol id="i-scorecard" viewBox="0 0 110 110" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><rect x="12" y="10" width="62" height="86" rx="6" fill="#dbe8f8"/><path d="M26 30h34M26 44h34M26 58h24M26 72h16" stroke="#1e5aa8"/><path d="M60 92l34-56 12 8-34 56-14 4z" fill="#f2c94c" stroke="#b5641a"/><path d="M94 36l12 8" stroke="#b5641a"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></symbol>
+  </defs>
+</svg>
+
+<header class="header">
+  <div class="header-top">
+    <div class="brand" id="brand"></div>
+    <span class="pill live" id="live-pill" data-i18n="live">En direct</span>
+    <button class="icon-btn" id="btn-bell" title="Notifications"><svg><use href="#i-bell"/></svg></button>
+    <button class="icon-btn" id="btn-theme" title="Theme"><svg><use href="#i-sun"/></svg></button>
+    <button class="icon-btn" id="btn-lang">FR</button>
+  </div>
+  <div class="header-title">
+    <div class="info">
+      <h1 id="ev-title">Golf</h1>
+      <div class="sub" id="ev-sub"></div>
+      <div class="sub" id="ev-updated"></div>
+    </div>
+    <button class="btn-outline" id="btn-prizes"><svg><use href="#i-flag"/></svg><span data-i18n="prizes_course">Prix &amp; Parcours</span></button>
+  </div>
+</header>
+<div class="partners" id="partners"><span class="label" data-i18n="partners">Nos partenaires</span><div class="logo" id="partner-logo"></div></div>
+
+<main>
+  <section class="view" id="view-leaderboard"></section>
+  <section class="view hidden" id="view-card"></section>
+  <section class="view hidden" id="view-rookies"></section>
+  <section class="view hidden" id="view-feed"></section>
+</main>
+
+<div class="fabs">
+  <button class="fab" id="fab-marshal"><svg><use href="#i-marshal"/></svg><span>Marshal</span></button>
+  <button class="fab water" id="fab-water"><svg><use href="#i-bottle"/></svg><span data-i18n="water">Eau</span></button>
+</div>
+
+<nav class="nav">
+  <button data-tab="leaderboard" class="on"><span class="ico"><svg><use href="#i-chart"/></svg></span><span data-i18n="tab_leaderboard">Classement</span></button>
+  <button data-tab="card"><span class="ico"><svg><use href="#i-card"/></svg></span><span data-i18n="tab_card">Carte</span></button>
+  <button data-tab="rookies"><span class="ico"><svg><use href="#i-pin"/></svg></span><span>Rookies</span></button>
+  <button data-tab="feed"><span class="ico"><svg><use href="#i-chat"/></svg></span><span data-i18n="tab_feed">Fil</span><span class="cnt hidden" id="feed-badge"></span></button>
+</nav>
+
+<div id="modal-root"></div>
+<script src="/static/i18n.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

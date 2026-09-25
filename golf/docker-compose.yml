@@ -1,0 +1,13 @@
+services:
+  golf:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      GOLF_ADMIN_TOKEN: ${GOLF_ADMIN_TOKEN:-change-me}
+      GOLF_SEED_DEMO: "0"
+    volumes:
+      - golf-data:/data
+volumes:
+  golf-data:

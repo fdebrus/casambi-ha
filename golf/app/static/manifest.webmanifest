@@ -1,0 +1,9 @@
+{
+  "name": "Golf Day",
+  "short_name": "Golf",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#eef2f7",
+  "theme_color": "#1e5aa8",
+  "icons": [{ "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
