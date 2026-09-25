@@ -34,7 +34,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Golf Day", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="Fairway Live", docs_url=None, redoc_url=None, lifespan=lifespan)
 
 
 # --- helpers ------------------------------------------------------------------
@@ -231,7 +231,7 @@ def sync_score_post(
     if wanted:
         conn.execute(
             "INSERT INTO posts (author_type, author_name, flight_id, kind, hole, meta, created_at)"
-            " VALUES ('system','Golf Day',?,?,?,?,?)",
+            " VALUES ('system','Fairway Live',?,?,?,?,?)",
             (
                 flight["id"],
                 wanted,
@@ -255,7 +255,7 @@ def sync_final_post(conn: sqlite3.Connection) -> None:
     winner = min(state["flights"], key=lambda f: f["score"]["rank_net"])
     conn.execute(
         "INSERT INTO posts (author_type, author_name, flight_id, kind, meta, created_at)"
-        " VALUES ('system','Golf Day',?,?,?,?)",
+        " VALUES ('system','Fairway Live',?,?,?,?)",
         (
             winner["id"],
             "final",
@@ -360,7 +360,7 @@ def api_prize_claim(prize_id: int, body: ClaimBody):
         )
         conn.execute(
             "INSERT INTO posts (author_type, author_name, flight_id, kind, hole, meta, created_at)"
-            " VALUES ('system','Golf Day',?,?,?,?,?)",
+            " VALUES ('system','Fairway Live',?,?,?,?,?)",
             (
                 f["id"],
                 "prize",
@@ -898,7 +898,7 @@ class AdminInfoPost(BaseModel):
 def admin_post_create(body: AdminInfoPost):
     with db.tx() as conn:
         cur = conn.execute(
-            "INSERT INTO posts (author_type, author_name, kind, text, created_at) VALUES ('system','Golf Day','info',?,?)",
+            "INSERT INTO posts (author_type, author_name, kind, text, created_at) VALUES ('system','Fairway Live','info',?,?)",
             (body.text.strip()[:2000], db.now_iso()),
         )
         return {"ok": True, "id": cur.lastrowid}

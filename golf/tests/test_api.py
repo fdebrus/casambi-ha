@@ -23,7 +23,7 @@ def client():
 
 def test_state_and_seed(client):
     st = client.get("/api/state").json()
-    assert st["event"]["title"] == "Golf 2026"
+    assert st["event"]["title"] == "Fairway Live 2026"
     assert len(st["holes"]) == 18
     assert len(st["flights"]) == 6
     assert st["flights"][0]["team_hcp"] == 14
@@ -239,7 +239,7 @@ def test_holes_validation_and_import_export(client):
 
 
 def test_spa_and_admin_pages(client):
-    assert "Golf Day" in client.get("/").text
+    assert "Fairway Live" in client.get("/").text
     assert "Admin" in client.get("/admin").text
     assert client.get("/api/nothing").status_code == 404
     assert client.get("/#feed").status_code == 200

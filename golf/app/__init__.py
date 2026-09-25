@@ -1,1 +1,1 @@
-"""Golf Day - competition scoring app."""
+"""Fairway Live - live golf competition scoring."""

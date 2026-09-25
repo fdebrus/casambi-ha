@@ -1,6 +1,6 @@
 {
-  "name": "Golf Day",
-  "short_name": "Golf",
+  "name": "Fairway Live",
+  "short_name": "Fairway",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#eef2f7",

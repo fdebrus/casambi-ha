@@ -1,4 +1,4 @@
-"""SQLite storage for the golf day app (stdlib sqlite3, no ORM)."""
+"""SQLite storage for the Fairway Live app (stdlib sqlite3, no ORM)."""
 
 from __future__ import annotations
 
@@ -108,8 +108,8 @@ CREATE TABLE IF NOT EXISTS rookie_scores (
 """
 
 DEFAULT_EVENT = {
-    "title": "Golf 2026",
-    "org_name": "NTT DATA",
+    "title": "Fairway Live 2026",
+    "org_name": "Fairway Live",
     "org_logo": "",
     "date": "2026-09-24",
     "course_name": "Golf Château de la Tournette, English course",
@@ -119,9 +119,9 @@ DEFAULT_EVENT = {
     "min_drives_per_player": 3,
     "photographer_notice": True,
     "partners": [
-        {"name": "Check Point", "logo": ""},
-        {"name": "Cisco", "logo": ""},
-        {"name": "Palo Alto Networks", "logo": ""},
+        {"name": "Partenaire 1", "logo": ""},
+        {"name": "Partenaire 2", "logo": ""},
+        {"name": "Partenaire 3", "logo": ""},
     ],
     "program": [
         {
@@ -366,7 +366,7 @@ def _seed_demo(conn: sqlite3.Connection) -> None:
             (fn, ln),
         )
     conn.execute(
-        "INSERT INTO posts (author_type, author_name, kind, text, created_at) VALUES ('system','Golf Day','info',?,?)",
+        "INSERT INTO posts (author_type, author_name, kind, text, created_at) VALUES ('system','Fairway Live','info',?,?)",
         ("welcome", now_iso()),
     )
 

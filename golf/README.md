@@ -1,4 +1,4 @@
-# Golf Day — live scoring for a corporate golf competition
+# Fairway Live — live scoring for a team golf competition
 
 Mobile-first web app for a one-day team scramble: flights enter their
 scores from the course with a PIN, everybody follows the live ranking, the

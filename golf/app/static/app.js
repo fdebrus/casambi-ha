@@ -1,4 +1,4 @@
-/* Golf Day front-end: vanilla JS, no build step. */
+/* Fairway Live front-end: vanilla JS, no build step. */
 (() => {
   "use strict";
 
@@ -83,7 +83,7 @@
     $("#btn-lang").textContent = S.lang.toUpperCase();
     $$("[data-i18n]").forEach((el) => { el.innerHTML = t(el.dataset.i18n); });
     const brand = $("#brand");
-    brand.innerHTML = ev.org_logo ? `<img src="${esc(ev.org_logo)}" alt="${esc(ev.org_name || "")}">` : `${svg("i-flag")}<span>${esc(ev.org_name || "Golf Day")}</span>`;
+    brand.innerHTML = ev.org_logo ? `<img src="${esc(ev.org_logo)}" alt="${esc(ev.org_name || "")}">` : `${svg("i-flag")}<span>${esc(ev.org_name || "Fairway Live")}</span>`;
     const pill = $("#live-pill");
     pill.className = "pill " + (ev.live && S.online ? "live" : "paused");
     pill.textContent = ev.live && S.online ? t("live") : t("paused");
@@ -507,7 +507,7 @@
   }
   function notifyNew(n) {
     if (!S.notif || document.visibilityState === "visible" && S.tab === "feed") return;
-    try { new Notification(S.state.event.title || "Golf Day", { body: t("new_posts", { n }), icon: "/static/icon.svg", tag: "golf-feed" }); } catch {}
+    try { new Notification(S.state.event.title || "Fairway Live", { body: t("new_posts", { n }), icon: "/static/icon.svg", tag: "golf-feed" }); } catch {}
   }
 
   // ---------- tabs & refresh ----------
