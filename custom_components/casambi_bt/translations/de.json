@@ -158,5 +158,11 @@
         "command_error": {
             "message": "Der Befehl konnte nicht an das Casambi Netzwerk gesendet werden."
         }
+    },
+    "issues": {
+        "unsupported_motor": {
+            "title": "Nicht unterstützter Motor: {name}",
+            "description": "**{name}** ({model}) ist ein Motor, dessen Steuerungen nicht zur Winsol Lamel Standard passen, mit der diese Integration entwickelt und getestet wurde, zum Beispiel eine Winsol Lamel Intelligent (Star-Paket). Damit nicht die falsche Steuerung angesprochen wird, werden für ihn keine Entitäten angelegt.\n\nSteuere ihn stattdessen über die Casambi- oder Winsol-App. Diese Warnung verschwindet, wenn die Einheit aus dem Netzwerk entfernt wird."
+        }
     }
 }

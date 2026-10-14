@@ -259,6 +259,15 @@ directly instead of driving it from Home Assistant. Its sensor-header
 mapping (which header carries the internal temperature) is an informed
 guess in that fork, not confirmed.
 
+Until then a Star must not be driven as a Lamel Standard: the library
+keeps the last slider it parses as `state.slider`, which here is the
+Cool/Warm setpoint, and the first writable ONOFF is `$auto`, not
+`$startstop`. `classify.py` therefore only treats an EXT/ slider motor as
+a louvre when it writes exactly one slider, at most one ONOFF and no
+dimmer. Any richer motor is `UNSUPPORTED_MOTOR`: it gets no entities, a
+warning in the log and a *Repairs* issue naming the unit and its model
+(removed when the entry unloads).
+
 ## Sun tracking
 
 Louvre units get a **Sun tracking** switch and a **Sun offset** number

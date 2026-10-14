@@ -151,5 +151,11 @@
         "command_error": {
             "message": "Het commando kon niet naar het Casambi netwerk worden verstuurd."
         }
+    },
+    "issues": {
+        "unsupported_motor": {
+            "title": "Niet-ondersteunde motor: {name}",
+            "description": "**{name}** ({model}) is een motor waarvan de bedieningen niet overeenkomen met de Winsol Lamel Standard waarop deze integratie gebouwd en getest is, bijvoorbeeld een Winsol Lamel Intelligent (Star-pakket). Om te voorkomen dat de verkeerde bediening wordt aangestuurd, worden er geen entiteiten voor aangemaakt.\n\nBedien hem in plaats daarvan via de Casambi- of Winsol-app. Deze waarschuwing verdwijnt als de unit uit het netwerk wordt verwijderd."
+        }
     }
 }

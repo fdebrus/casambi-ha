@@ -28,10 +28,11 @@ from homeassistant.exceptions import (
     ConfigEntryError,
     ConfigEntryNotReady,
 )
-from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import device_registry as dr, issue_registry as ir
 from homeassistant.helpers.httpx_client import get_async_client
 
 from . import switch_decoder
+from .classify import UnitKind, classify_unit
 from .const import (
     CONF_DEMO,
     DOMAIN,
@@ -78,6 +79,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
     )
     api.network_device_id = network_device.id
 
+    _flag_unsupported_motors(hass, entry, api)
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
@@ -97,8 +100,50 @@ async def async_unload_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> 
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     await entry.runtime_data.disconnect()
+    _clear_unsupported_motors(hass, entry)
 
     return unload_ok
+
+
+def _unsupported_issue_prefix(entry: CasambiConfigEntry) -> str:
+    return f"unsupported_motor_{entry.entry_id}_"
+
+
+@callback
+def _flag_unsupported_motors(
+    hass: HomeAssistant, entry: CasambiConfigEntry, api: CasambiApi
+) -> None:
+    """Raise a repair issue for each motor this integration must not drive."""
+    for unit in api.get_units():
+        if classify_unit(unit) is not UnitKind.UNSUPPORTED_MOTOR:
+            continue
+        _LOGGER.warning(
+            "%s (%s) is a motor with an untested control layout; "
+            "no entities are created for it",
+            unit.name,
+            unit.unitType.model,
+        )
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            f"{_unsupported_issue_prefix(entry)}{unit.uuid}",
+            is_fixable=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="unsupported_motor",
+            translation_placeholders={
+                "name": unit.name,
+                "model": unit.unitType.model,
+            },
+        )
+
+
+@callback
+def _clear_unsupported_motors(hass: HomeAssistant, entry: CasambiConfigEntry) -> None:
+    """Remove this entry's unsupported-motor issues."""
+    prefix = _unsupported_issue_prefix(entry)
+    for domain, issue_id in list(ir.async_get(hass).issues):
+        if domain == DOMAIN and issue_id.startswith(prefix):
+            ir.async_delete_issue(hass, DOMAIN, issue_id)
 
 
 async def async_remove_config_entry_device(

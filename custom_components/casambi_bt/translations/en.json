@@ -158,5 +158,11 @@
         "command_error": {
             "message": "Failed to send the command to the Casambi network."
         }
+    },
+    "issues": {
+        "unsupported_motor": {
+            "title": "Unsupported motor: {name}",
+            "description": "**{name}** ({model}) is a motor whose controls do not match the Winsol Lamel Standard louvre this integration was built and tested on, for example a Winsol Lamel Intelligent (Star pack). To avoid driving the wrong control, no entities are created for it.\n\nControl it from the Casambi or Winsol app instead. This warning goes away if the unit is removed from the network."
+        }
     }
 }

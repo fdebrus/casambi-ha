@@ -34,7 +34,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 
 from .conftest import (
@@ -43,12 +43,14 @@ from .conftest import (
     WINSOL_LOUVRE_UUID,
     WINSOL_RELAY_UUID,
     WINSOL_SCREEN_UUID,
+    WINSOL_STAR_LOUVRE_UUID,
     make_light_unit,
     make_louvre_unit,
     make_sensor_platform_unit,
     make_winsol_louvre_unit,
     make_winsol_relay_unit,
     make_winsol_screen_unit,
+    make_winsol_star_louvre_unit,
 )
 
 
@@ -73,6 +75,42 @@ def test_classification() -> None:
     assert classify_unit(make_winsol_screen_unit()) is UnitKind.SCREEN
     assert classify_unit(make_winsol_relay_unit()) is UnitKind.RELAY
     assert classify_unit(make_sensor_platform_unit()) is UnitKind.SENSOR_PLATFORM
+    assert classify_unit(make_winsol_star_louvre_unit()) is UnitKind.UNSUPPORTED_MOTOR
+
+
+async def test_star_louvre_is_not_driven(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a Lamel Intelligent gets no entities but a repair issue."""
+    mock_casambi.units.append(make_winsol_star_louvre_unit())
+    await _setup(hass, mock_config_entry)
+
+    registry = er.async_get(hass)
+    assert not [
+        e
+        for e in er.async_entries_for_config_entry(registry, mock_config_entry.entry_id)
+        if WINSOL_STAR_LOUVRE_UUID in e.unique_id
+    ]
+    # The tested louvre is still a cover.
+    _entity_id(hass, COVER_DOMAIN, f"{NETWORK_ID}-unit-{WINSOL_LOUVRE_UUID}-cover")
+
+    issue_id = (
+        f"unsupported_motor_{mock_config_entry.entry_id}_{WINSOL_STAR_LOUVRE_UUID}"
+    )
+    issue = ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    assert issue is not None
+    assert issue.translation_key == "unsupported_motor"
+    assert issue.translation_placeholders == {
+        "name": "Star Louvres",
+        "model": "Winsol Lamel Intelligent",
+    }
+
+    assert await hass.config_entries.async_unload(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
 def test_onoff_luminaire_stays_a_light() -> None:
