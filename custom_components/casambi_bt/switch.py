@@ -187,6 +187,7 @@ async def async_setup_entry(
     for unit in louvres:
         entities.append(CasambiSunTrackingSwitch(casa_api, unit, config_entry))
         entities.append(CasambiTemperatureControlSwitch(casa_api, unit))
+        entities.append(CasambiFrostLockSwitch(casa_api, unit))
 
     for unit in sensor_platforms:
         enable_controls = sorted(
@@ -358,6 +359,9 @@ class CasambiSunTrackingSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
         if self._api.rain_active or self._api.wind_active:
             _LOGGER.debug("Sun tracking: weather protection has priority")
             return
+        if self._api.frost_lock_temperature(self._obj) is not None:
+            _LOGGER.debug("Sun tracking %s: frost lock, not moving", self._obj.name)
+            return
 
         unit = self._obj
         elevation, azimuth = get_sun_position(self.hass)
@@ -426,6 +430,46 @@ class CasambiTemperatureControlSwitch(CasambiUnitEntity, SwitchEntity, RestoreEn
         """Disable the temperature bias."""
         self._attr_is_on = False
         self._api.temp_control[self._obj.uuid] = False
+        self.async_write_ha_state()
+
+
+class CasambiFrostLockSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
+    """Keeps a louvre from being opened when it may be frozen.
+
+    While on and the temperature source reads below the frost lock
+    threshold, Home Assistant refuses to open the louvres and sun tracking
+    pauses; closing and stopping stay possible. On by default.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+    _attr_is_on = True
+
+    def __init__(self, api: CasambiApi, unit: Unit) -> None:
+        """Initialize a frost lock switch."""
+        desc = TypedEntityDescription(
+            key=unit.uuid, entity_type="frost-lock", translation_key="frost_lock"
+        )
+        self._obj: Unit
+        super().__init__(api, desc, unit)
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous state."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state == "off":
+            self._attr_is_on = False
+        self._api.frost_lock[self._obj.uuid] = self._attr_is_on
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Enable the frost lock."""
+        self._attr_is_on = True
+        self._api.frost_lock[self._obj.uuid] = True
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Disable the frost lock."""
+        self._attr_is_on = False
+        self._api.frost_lock[self._obj.uuid] = False
         self.async_write_ha_state()
 
 

@@ -58,9 +58,10 @@
                     "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)",
                     "louvre_azimuth": "Pergola orientation (azimuth in degrees, 180 = south)",
                     "wind_threshold": "Wind threshold for retracting screens and closing louvres (km/h)",
-                    "temperature_entity": "Temperature sensor for temperature control",
+                    "temperature_entity": "Temperature sensor for temperature control and the frost lock",
                     "rain_entity": "Rain sensor for weather protection (binary sensor, precipitation sensor or weather entity)",
-                    "wind_entity": "Wind speed sensor for weather protection"
+                    "wind_entity": "Wind speed sensor for weather protection",
+                    "frost_lock_temperature": "Frost lock: refuse to open the louvres below this temperature (°C)"
                 },
                 "title": "Casambi options"
             }
@@ -133,6 +134,9 @@
             "demo_rain": {
                 "name": "Simulate rain"
             },
+            "frost_lock": {
+                "name": "Frost lock"
+            },
             "light_sensor_enabled": {
                 "name": "Light sensor enabled"
             },
@@ -159,6 +163,9 @@
     "exceptions": {
         "command_error": {
             "message": "Failed to send the command to the Casambi network."
+        },
+        "frost_lock": {
+            "message": "The louvres are locked against frost: it is {temperature} °C, so they may be frozen to their seals. You can still close or stop them, or turn off the frost lock."
         }
     },
     "issues": {

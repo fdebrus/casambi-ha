@@ -51,9 +51,10 @@
                     "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?",
                     "louvre_azimuth": "Oriëntatie van de pergola (azimut in graden, 180 = zuid)",
                     "wind_threshold": "Windgrens voor het intrekken van schermen en sluiten van de lamellen (km/u)",
-                    "temperature_entity": "Temperatuursensor voor temperatuurregeling",
+                    "temperature_entity": "Temperatuursensor voor temperatuurregeling en de vorstvergrendeling",
                     "rain_entity": "Regensensor voor weerbescherming (binaire sensor, neerslagsensor of weer-entiteit)",
-                    "wind_entity": "Windsnelheidssensor voor weerbescherming"
+                    "wind_entity": "Windsnelheidssensor voor weerbescherming",
+                    "frost_lock_temperature": "Vorstvergrendeling: lamellen niet openen onder deze temperatuur (°C)"
                 },
                 "title": "Casambi opties"
             }
@@ -126,6 +127,9 @@
             "demo_rain": {
                 "name": "Regen simuleren"
             },
+            "frost_lock": {
+                "name": "Vorstvergrendeling"
+            },
             "light_sensor_enabled": {
                 "name": "Lichtsensor ingeschakeld"
             },
@@ -152,6 +156,9 @@
     "exceptions": {
         "command_error": {
             "message": "Het commando kon niet naar het Casambi netwerk worden verstuurd."
+        },
+        "frost_lock": {
+            "message": "De lamellen zijn vergrendeld tegen vorst: het is {temperature} °C, ze kunnen aan hun dichtingen vastgevroren zijn. Sluiten of stoppen kan nog steeds, of schakel de vorstvergrendeling uit."
         }
     },
     "issues": {

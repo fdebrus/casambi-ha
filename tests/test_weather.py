@@ -15,6 +15,7 @@ from custom_components.casambi_bt.const import (
 from custom_components.casambi_bt.switch import entity_reports_rain, entity_wind_kmh
 from homeassistant.const import ATTR_ENTITY_ID, ATTR_UNIT_OF_MEASUREMENT
 from homeassistant.core import HomeAssistant, State
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import SENSOR_PLATFORM_UUID, WINSOL_LOUVRE_UUID, WINSOL_SCREEN_UUID
@@ -450,3 +451,98 @@ def test_entity_wind_kmh(value: str, unit: str | None, expected: float | None) -
         assert result is None
     else:
         assert result == pytest.approx(expected)
+
+
+async def test_frost_lock(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that cold weather blocks opening but not closing the louvres."""
+    hass.states.async_set(TEMP_SENSOR, "0.5")
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_TEMPERATURE_ENTITY: TEMP_SENSOR}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    prefix = f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}"
+    cover_id = _entity_id(hass, "cover", f"{prefix}-cover")
+    lock_id = _entity_id(hass, "switch", f"{prefix}-frost-lock")
+    tracking_id = _entity_id(hass, "switch", f"{prefix}-sun-tracking")
+    assert hass.states.get(lock_id).state == "on"
+
+    # Opening, fully or part way past the current position, is refused.
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            "cover", "open_cover", {ATTR_ENTITY_ID: cover_id}, blocking=True
+        )
+    assert err.value.translation_key == "frost_lock"
+    assert err.value.translation_placeholders == {"temperature": "0.5"}
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "cover",
+            "set_cover_position",
+            {ATTR_ENTITY_ID: cover_id, "position": 80},
+            blocking=True,
+        )
+    mock_casambi.setSlider.assert_not_awaited()
+    mock_casambi.setControlValue.assert_not_awaited()
+
+    # Closing further is allowed.
+    await hass.services.async_call(
+        "cover",
+        "set_cover_position",
+        {ATTR_ENTITY_ID: cover_id, "position": 20},
+        blocking=True,
+    )
+    mock_casambi.setSlider.assert_awaited_once()
+    assert mock_casambi.setSlider.await_args.args[1] == 51
+    await hass.services.async_call(
+        "cover", "close_cover", {ATTR_ENTITY_ID: cover_id}, blocking=True
+    )
+    mock_casambi.setSlider.reset_mock()
+    mock_casambi.setControlValue.reset_mock()
+
+    # Sun tracking pauses.
+    with patch(
+        "custom_components.casambi_bt.switch.get_sun_position",
+        return_value=(45.0, 180.0),
+    ):
+        await hass.services.async_call(
+            "switch", "turn_on", {ATTR_ENTITY_ID: tracking_id}, blocking=True
+        )
+    mock_casambi.setSlider.assert_not_awaited()
+
+    # A dropped temperature source keeps its last reading.
+    hass.states.async_set(TEMP_SENSOR, "unavailable")
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            "cover", "open_cover", {ATTR_ENTITY_ID: cover_id}, blocking=True
+        )
+
+    # Above the threshold the louvres open again.
+    hass.states.async_set(TEMP_SENSOR, "3")
+    await hass.services.async_call(
+        "cover",
+        "set_cover_position",
+        {ATTR_ENTITY_ID: cover_id, "position": 80},
+        blocking=True,
+    )
+    mock_casambi.setSlider.assert_awaited_once()
+    mock_casambi.setSlider.reset_mock()
+
+    # Turning the lock off lets them open in the cold.
+    hass.states.async_set(TEMP_SENSOR, "-4")
+    await hass.services.async_call(
+        "switch", "turn_off", {ATTR_ENTITY_ID: lock_id}, blocking=True
+    )
+    await hass.services.async_call(
+        "cover",
+        "set_cover_position",
+        {ATTR_ENTITY_ID: cover_id, "position": 80},
+        blocking=True,
+    )
+    mock_casambi.setSlider.assert_awaited_once()

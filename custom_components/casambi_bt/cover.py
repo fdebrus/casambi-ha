@@ -19,12 +19,13 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_time_interval
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
-from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, entry_option
+from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, DOMAIN, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -377,12 +378,33 @@ class CasambiLouvreCover(CasambiMotorCover):
         """Return True while the louvres close on a button-style run."""
         return self._toggle_running() and self._last_raising is False
 
+    def _check_frost_lock(self) -> None:
+        """Refuse to open louvres that may be frozen to their seals.
+
+        Closing and stopping stay possible: they don't pull frozen slats
+        open. Commands from the wall button or the Casambi app bypass Home
+        Assistant and are not affected.
+        """
+        temperature = self._api.frost_lock_temperature(self._obj)
+        if temperature is not None:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="frost_lock",
+                translation_placeholders={"temperature": f"{temperature:g}"},
+            )
+
+    async def async_open_cover(self, **kwargs: Any) -> None:
+        """Open the louvres unless the frost lock holds them."""
+        self._check_frost_lock()
+        await super().async_open_cover(**kwargs)
+
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the louvres to a specific position (0-100)."""
-        position = kwargs[ATTR_POSITION]
-        await self._async_casa_command(
-            self._api.casa.setSlider(self._obj, round(position * CASA_RAW_MAX / 100))
-        )
+        target = round(kwargs[ATTR_POSITION] * CASA_RAW_MAX / 100)
+        current = self._raw_position(self._obj)
+        if current is None or target > current:
+            self._check_frost_lock()
+        await self._async_casa_command(self._api.casa.setSlider(self._obj, target))
 
 
 class CasambiScreenCover(CasambiMotorCover):

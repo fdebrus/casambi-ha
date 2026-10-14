@@ -67,7 +67,8 @@ All later settings live behind the integration's **Configure** button:
 | Vertical controls as covers | For *light* fixtures with a vertical channel (not needed for Winsol motors) |
 | Pergola orientation (azimuth) | Compass direction the pergola faces, for sun tracking (180 = south) |
 | Wind threshold | Wind speed (km/h) at which weather protection retracts the screens and closes the louvres |
-| Temperature sensor | Any HA temperature sensor, used by the temperature control |
+| Temperature sensor | Any HA temperature sensor, used by the temperature control and the frost lock |
+| Frost lock temperature | Below this (°C, default 2) the frost lock refuses to open the louvres |
 | Rain sensor | Any HA rain source (binary sensor, precipitation sensor or weather entity), used by weather protection — needed when the pergola has no Sensor Platform |
 | Wind sensor | Any HA wind speed sensor (converted to km/h), used by weather protection — needed when the pergola has no Sensor Platform |
 
@@ -145,6 +146,10 @@ Appears as a network-level **Weather protection** switch when a Sensor Platform 
 
 - **Rain** → all louvres close into a sealed roof, and sun tracking pauses until the sensor reads dry again.
 - **Wind ≥ threshold** (default 35 km/h) → all screens retract and all louvres close immediately — closed is the position in which the roof is rated for wind (Winsol SO!: wind class 3, 6 Beaufort, about 39–49 km/h) — and sun tracking pauses. Latched with hysteresis: tracking resumes once the wind drops below 80% of the threshold, but screens are **never re-extended automatically** — re-extend them yourself when the storm has passed.
+
+### 🧊 Frost lock
+
+Wet louvres can freeze to their seals, and pulling them open then strains the motor (watch the **Overcurrent events** sensor). Each louvre has a **Frost lock** switch, on by default: while the temperature sensor from the options reads below the frost lock temperature (default 2 °C), Home Assistant **refuses to open the louvres** — from the dashboard, Siri/HomeKit or an automation — with an error saying why, and sun tracking pauses. Closing and stopping stay possible, so weather protection still works. If the temperature sensor drops out, its last reading counts. The wall button and the Casambi app bypass Home Assistant and are not locked. Without a temperature sensor the lock does nothing; turn the switch off to open the louvres in the cold anyway.
 
 All switch states and dials survive HA restarts.
 
