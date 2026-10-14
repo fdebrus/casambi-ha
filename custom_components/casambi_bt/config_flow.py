@@ -29,8 +29,10 @@ from .const import (
     CONF_DEMO,
     CONF_IMPORT_GROUPS,
     CONF_LOUVRE_AZIMUTH,
+    CONF_RAIN_ENTITY,
     CONF_TEMPERATURE_ENTITY,
     CONF_VERTICAL_AS_COVER,
+    CONF_WIND_ENTITY,
     CONF_WIND_THRESHOLD,
     DEFAULT_LOUVRE_AZIMUTH,
     DEFAULT_WIND_THRESHOLD,
@@ -129,6 +131,30 @@ class OptionsFlow(config_entries.OptionsFlow):
                 ): selector.EntitySelector(
                     selector.EntitySelectorConfig(
                         domain="sensor", device_class="temperature"
+                    )
+                ),
+                vol.Optional(
+                    CONF_RAIN_ENTITY,
+                    description={
+                        "suggested_value": entry_option(
+                            self._entry, CONF_RAIN_ENTITY, None
+                        )
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain=["binary_sensor", "sensor", "weather"]
+                    )
+                ),
+                vol.Optional(
+                    CONF_WIND_ENTITY,
+                    description={
+                        "suggested_value": entry_option(
+                            self._entry, CONF_WIND_ENTITY, None
+                        )
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor", device_class="wind_speed"
                     )
                 ),
             }

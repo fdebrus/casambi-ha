@@ -57,8 +57,10 @@
                     "import_groups": "Gruppen importieren",
                     "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)",
                     "louvre_azimuth": "Ausrichtung der Pergola (Azimut in Grad, 180 = Süden)",
-                    "wind_threshold": "Windgrenze zum Einfahren der Screens (km/h)",
-                    "temperature_entity": "Temperatursensor für die Temperaturregelung"
+                    "wind_threshold": "Windgrenze zum Einfahren der Screens und Schließen der Lamellen (km/h)",
+                    "temperature_entity": "Temperatursensor für die Temperaturregelung",
+                    "rain_entity": "Regensensor für den Wetterschutz (Binärsensor, Niederschlagssensor oder Wetter-Entität)",
+                    "wind_entity": "Windgeschwindigkeitssensor für den Wetterschutz"
                 },
                 "title": "Casambi Optionen"
             }

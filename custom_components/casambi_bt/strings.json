@@ -56,8 +56,10 @@
           "import_groups": "Import groups?",
           "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?",
           "louvre_azimuth": "Pergola orientation (azimuth in degrees, 180 = south)",
-          "wind_threshold": "Wind threshold for retracting screens (km/h)",
-          "temperature_entity": "Temperature sensor for temperature control"
+          "wind_threshold": "Wind threshold for retracting screens and closing louvres (km/h)",
+          "temperature_entity": "Temperature sensor for temperature control",
+          "rain_entity": "Rain sensor for weather protection (binary sensor, precipitation sensor or weather entity)",
+          "wind_entity": "Wind speed sensor for weather protection"
         }
       }
     }
