@@ -18,6 +18,33 @@
 
 The documentation below describes what this fork does, for my own reference.
 
+## Tested hardware
+
+> [!CAUTION]
+> **This fork does not work with every Winsol pergola.** It was built and
+> tested on a single installation, a Winsol SO! Climate pergola (Cosy pack),
+> and only the units below are confirmed. Winsol ships other packs with
+> different Casambi fixtures: the same pergola model can carry a louvre
+> motor or screen whose controls sit at other places in its state. A louvre
+> motor with more controls than the tested one is skipped and reported
+> under *Repairs*; other differences are not detected.
+
+| Unit | Status |
+|---|---|
+| Winsol Lamel Standard V4.1 TA16 (louvres, 5-byte state) | ✅ Tested |
+| Winsol SO! V4.1 (screens) | ✅ Tested |
+| Winsol On-Off (relay, pergola heating) | ✅ Tested |
+| Winsol Mono (dimmable spots) | ✅ Tested |
+| 24VDC_4CH_PB_Winsol (wall buttons) | ✅ Tested |
+| Sensor Platform V4 (weather option) | ⚠️ Implemented from fixture definitions only, never run on real hardware |
+| **Winsol Lamel Intelligent (Star pack, 7-byte state)** | ❌ **Not supported**: its louvre has native automatic/intelligent modes, shade/sun and cool/warm controls this fork does not handle. It is left alone: no entities are created for it and a warning appears under *Settings → System → Repairs* |
+| Any other Winsol or Casambi motor | ❓ Unknown |
+
+If your pergola has a different unit, do not use this fork to drive it;
+[superkikim/casambi-bt-hass](https://github.com/superkikim/casambi-bt-hass)
+supports the Lamel Intelligent. The integration's diagnostics download
+lists every unit's name and control layout, so you can compare.
+
 ## Requirements
 
 - Home Assistant **2026.6 or newer** (the underlying `casambi-bt` library needs bleak ≥ 3.0, which Home Assistant ships from 2026.6)

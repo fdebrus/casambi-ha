@@ -38,7 +38,26 @@ class UnitKind(Enum):
     SCREEN = auto()
     RELAY = auto()
     SENSOR_PLATFORM = auto()
+    UNSUPPORTED_MOTOR = auto()
     OTHER = auto()
+
+
+def _is_known_louvre(unit: Unit) -> bool:
+    """Return True if the motor has the tested Lamel Standard layout.
+
+    That layout writes exactly one slider (the louvre angle) and at most one
+    on/off bit (start/stop). Richer motors such as the Winsol Lamel
+    Intelligent (Star pack) also write a shade/sun dimmer, a cool/warm
+    slider and automatic/intelligent bits; driving them as a plain louvre
+    would read the cool/warm setpoint as the position and toggle the
+    automatic mode instead of the motor.
+    """
+    writable = [c.type for c in unit.unitType.controls if not c.readonly]
+    return (
+        writable.count(UnitControlType.SLIDER) == 1
+        and writable.count(UnitControlType.ONOFF) <= 1
+        and UnitControlType.DIMMER not in writable
+    )
 
 
 def classify_unit(unit: Unit) -> UnitKind:
@@ -47,6 +66,8 @@ def classify_unit(unit: Unit) -> UnitKind:
     - Any color-capable unit is a light.
     - A writable SLIDER on an EXT/ unit is a motor position in degrees
       (e.g. Winsol Lamel louvres: slider $pos 0-142° + onoff $startstop).
+      A motor with more writable controls than that (e.g. the Winsol Lamel
+      Intelligent) is an unsupported motor and gets no entities.
     - EXT/1ch/Dim with only a dimmer is a motor-driven screen/blind whose
       position is reported as the dimmer value (e.g. Winsol SO!).
     - An EXT/ unit whose only control is a writable ONOFF bit is a relay
@@ -70,7 +91,9 @@ def classify_unit(unit: Unit) -> UnitKind:
         c.type == UnitControlType.SLIDER and not c.readonly
         for c in unit.unitType.controls
     ):
-        return UnitKind.LOUVRE
+        if _is_known_louvre(unit):
+            return UnitKind.LOUVRE
+        return UnitKind.UNSUPPORTED_MOTOR
 
     if mode.startswith("EXT/1ch/Dim") and UnitControlType.DIMMER in ctypes:
         return UnitKind.SCREEN

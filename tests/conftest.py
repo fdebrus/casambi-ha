@@ -32,6 +32,7 @@ NETWORK_NAME = "Test Network"
 LIGHT_UUID = "unit-light-uuid"
 LOUVRE_UUID = "unit-louvre-uuid"
 WINSOL_LOUVRE_UUID = "unit-winsol-louvre-uuid"
+WINSOL_STAR_LOUVRE_UUID = "unit-winsol-star-louvre-uuid"
 WINSOL_SCREEN_UUID = "unit-winsol-screen-uuid"
 WINSOL_RELAY_UUID = "unit-winsol-relay-uuid"
 SENSOR_PLATFORM_UUID = "unit-sensor-platform-uuid"
@@ -150,6 +151,39 @@ def make_winsol_louvre_unit() -> Unit:
         state_length=5,
     )
     state._raw_state = bytes(5)  # noqa: SLF001
+    return unit
+
+
+def make_winsol_star_louvre_unit() -> Unit:
+    """Create a unit modeled on the Winsol Lamel Intelligent (Star pack).
+
+    Control layout as decoded by superkikim: the multiplexed sensors (bits
+    0-27), dimmer $shadow (28-35), slider $pos (36-43), slider $temp
+    (44-51), and onoff $auto, $intel and $startstop (bits 52-54).
+    """
+    state = UnitState()
+    state.slider = 128
+    unit = _make_unit(
+        38916,
+        13,
+        WINSOL_STAR_LOUVRE_UUID,
+        "Star Louvres",
+        [
+            UnitControl(UnitControlType.UNKNOWN, 0, 4, 0, True),
+            UnitControl(UnitControlType.UNKNOWN, 4, 24, 0, True),
+            UnitControl(UnitControlType.DIMMER, 28, 8, 0, False),
+            UnitControl(UnitControlType.SLIDER, 36, 8, 0, False, 0, 142),
+            UnitControl(UnitControlType.SLIDER, 44, 8, 0, False, 15, 30),
+            UnitControl(UnitControlType.ONOFF, 52, 1, 0, False),
+            UnitControl(UnitControlType.ONOFF, 53, 1, 0, False),
+            UnitControl(UnitControlType.ONOFF, 54, 1, 0, False),
+        ],
+        state,
+        mode="EXT/Elements",
+        model="Winsol Lamel Intelligent",
+        state_length=7,
+    )
+    state._raw_state = bytes(7)  # noqa: SLF001
     return unit
 
 
