@@ -54,7 +54,7 @@ fork (whose enhanced `casambi-bt-skk` library this integration uses):
 
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
-| Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), multiplexed sensors | Cover (blind) with position + stop |
+| Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27) | Cover (blind) with position + stop, plus one raw diagnostic sensor per channel |
 | Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35), onoff `$toggle` (bit 36), travel-time sensors | Cover (shade) with position + stop |
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (written with `turnOn`/`turnOff`) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
@@ -101,6 +101,13 @@ platform was present**, so the weather entities and the weather
 protection switch do not appear on such a network; whether the pack's rain
 sensor is wired directly to the motor rather than onto the mesh is an open
 question for the installer.
+
+The Lamel itself declares four SENSOR controls and cycles through four
+channels in its state every ~4 s. Observed on that network: channel 1 rose
+from 17 to 30 over a sunny day (temperature-like), channels 2, 3 and 4 held
+0, 15 and 50. Each channel is exposed as a raw diagnostic sensor on the
+louvre device so they can be identified (e.g. by wetting the rain sensor
+and watching which channel reacts) before any semantics are attached.
 
 ### Winsol Lamel Intelligent (Star) — decoded, not implemented
 
