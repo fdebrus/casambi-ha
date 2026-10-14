@@ -50,9 +50,10 @@
                     "import_groups": "Importeer groupen?",
                     "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?",
                     "louvre_azimuth": "Oriëntatie van de pergola (azimut in graden, 180 = zuid)",
-                    "wind_threshold": "Windgrens voor het intrekken van schermen (km/u)",
+                    "wind_threshold": "Windgrens voor het intrekken van schermen en sluiten van de lamellen (km/u)",
                     "temperature_entity": "Temperatuursensor voor temperatuurregeling",
-                    "rain_entity": "Regensensor voor weerbescherming (binaire sensor, neerslagsensor of weer-entiteit)"
+                    "rain_entity": "Regensensor voor weerbescherming (binaire sensor, neerslagsensor of weer-entiteit)",
+                    "wind_entity": "Windsnelheidssensor voor weerbescherming"
                 },
                 "title": "Casambi opties"
             }

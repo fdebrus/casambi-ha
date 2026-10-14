@@ -203,6 +203,7 @@ class CasambiApi:
         self.temp_control: dict[str, bool] = {}
         self.temp_setpoints: dict[str, float] = {}
         self.rain_active = False
+        self.wind_active = False
         # Registry id of the network device, set once it has been created so
         # that unit devices can be linked to it.
         self.network_device_id: str | None = None

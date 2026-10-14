@@ -9,10 +9,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.casambi_bt.const import (
     CONF_RAIN_ENTITY,
     CONF_TEMPERATURE_ENTITY,
+    CONF_WIND_ENTITY,
     DOMAIN,
 )
-from custom_components.casambi_bt.switch import entity_reports_rain
-from homeassistant.const import ATTR_ENTITY_ID
+from custom_components.casambi_bt.switch import entity_reports_rain, entity_wind_kmh
+from homeassistant.const import ATTR_ENTITY_ID, ATTR_UNIT_OF_MEASUREMENT
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
@@ -114,13 +115,19 @@ async def test_weather_protection_rain_and_wind(
     await hass.async_block_till_done()
 
     # Default cache is dry with 35 km/h wind (raw 140), exactly at the
-    # threshold: screens retract immediately on enable.
+    # threshold: screens retract and louvres close immediately on enable.
     mock_casambi.setLevel.assert_awaited_once()
     screen_target, screen_raw = mock_casambi.setLevel.await_args.args
     assert screen_target.uuid == WINSOL_SCREEN_UUID
     # Retracted is raw 0: the dimmer measures how far the screen is out.
     assert screen_raw == 0
+    mock_casambi.setSlider.assert_awaited_once()
+    louvre_target, louvre_raw = mock_casambi.setSlider.await_args.args
+    assert louvre_target.uuid == WINSOL_LOUVRE_UUID
+    assert louvre_raw == 0
+    assert api.wind_active is True
     mock_casambi.setLevel.reset_mock()
+    mock_casambi.setSlider.reset_mock()
 
     # Rain starts: louvres close and sun tracking is paused.
     sensor_unit._sensor_cache[0] = 5  # noqa: SLF001
@@ -348,3 +355,98 @@ def test_entity_reports_rain(entity_id: str, value: str, expected: bool | None) 
 def test_entity_reports_rain_missing() -> None:
     """Test that a missing entity can't tell."""
     assert entity_reports_rain(None) is None
+
+
+WIND_ENTITY = "sensor.terrace_wind"
+
+
+async def test_wind_entity_without_sensor_platform(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a wind entity retracts screens, closes louvres, pauses tracking."""
+    mock_casambi.units = [
+        u for u in mock_casambi.units if u.uuid != SENSOR_PLATFORM_UUID
+    ]
+    kmh = {ATTR_UNIT_OF_MEASUREMENT: "km/h"}
+    hass.states.async_set(WIND_ENTITY, "10", kmh)
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_WIND_ENTITY: WIND_ENTITY}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    api = mock_config_entry.runtime_data
+    protection_id = _entity_id(
+        hass, "switch", f"{mock_casambi.networkId}-weather-protection"
+    )
+    tracking_id = _entity_id(
+        hass,
+        "switch",
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-sun-tracking",
+    )
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_not_awaited()
+    mock_casambi.setSlider.assert_not_awaited()
+
+    # A storm: screens retract and the roof closes.
+    hass.states.async_set(WIND_ENTITY, "40", kmh)
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_awaited_once()
+    screen_target, screen_raw = mock_casambi.setLevel.await_args.args
+    assert screen_target.uuid == WINSOL_SCREEN_UUID
+    assert screen_raw == 0
+    mock_casambi.setSlider.assert_awaited_once()
+    louvre_target, louvre_raw = mock_casambi.setSlider.await_args.args
+    assert louvre_target.uuid == WINSOL_LOUVRE_UUID
+    assert louvre_raw == 0
+    assert api.wind_active is True
+    mock_casambi.setSlider.reset_mock()
+
+    # Sun tracking stays paused while it blows.
+    with patch(
+        "custom_components.casambi_bt.switch.get_sun_position",
+        return_value=(45.0, 180.0),
+    ):
+        await hass.services.async_call(
+            "switch", "turn_on", {ATTR_ENTITY_ID: tracking_id}, blocking=True
+        )
+    mock_casambi.setSlider.assert_not_awaited()
+
+    # An unavailable sensor and a lull above the hysteresis keep it latched.
+    hass.states.async_set(WIND_ENTITY, "unavailable")
+    hass.states.async_set(WIND_ENTITY, "30", kmh)
+    await hass.async_block_till_done()
+    assert api.wind_active is True
+    mock_casambi.setLevel.assert_awaited_once()
+
+    # The wind drops below 80% of the threshold: tracking may resume.
+    hass.states.async_set(WIND_ENTITY, "20", kmh)
+    await hass.async_block_till_done()
+    assert api.wind_active is False
+
+
+@pytest.mark.parametrize(
+    ("value", "unit", "expected"),
+    [
+        ("36", "km/h", 36.0),
+        ("10", "m/s", 36.0),
+        ("36", None, 36.0),
+        ("unavailable", "km/h", None),
+        ("36", "furlongs", None),
+    ],
+)
+def test_entity_wind_kmh(value: str, unit: str | None, expected: float | None) -> None:
+    """Test that wind readings are converted to km/h."""
+    attributes = {ATTR_UNIT_OF_MEASUREMENT: unit} if unit else {}
+    result = entity_wind_kmh(State(WIND_ENTITY, value, attributes))
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected)

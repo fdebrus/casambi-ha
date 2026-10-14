@@ -296,8 +296,12 @@ pauses sun tracking until dry. Rain is the OR of the sensor platform
 on, weather condition rainy/pouring/lightning-rainy/snowy-rainy/hail, any
 other numeric state above 0; unavailable/unknown/non-numeric keep the last
 reading); wind at or above the configured threshold
-(default 35 km/h) retracts all screens, latched with 80% hysteresis, and
-never re-extends them automatically.
+(default 35 km/h) retracts all screens, closes all louvres and pauses sun
+tracking, latched with 80% hysteresis; screens are never re-extended
+automatically. Wind is the higher of the sensor platform (packet 1 / 4)
+and the wind entity (`entity_wind_kmh`, converted from its unit with
+`SpeedConverter`; no unit means km/h). The switch is also created when
+only a wind entity is set.
 
 ## Demo mode
 

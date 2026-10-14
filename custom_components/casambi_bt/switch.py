@@ -7,8 +7,9 @@
   terrace is warmer than the setpoint and toward more sun when colder.
 - Weather protection: closes the louvres while it rains and retracts
   screens when the wind exceeds a threshold, based on the readings of a
-  Casambi sensor platform. Rain can also come from any Home Assistant
-  entity chosen in the options, for pergolas without a sensor platform.
+  Casambi sensor platform. Rain and wind can also come from any Home
+  Assistant entities chosen in the options, for pergolas without a sensor
+  platform. Wind also closes the louvres.
 """
 
 from __future__ import annotations
@@ -20,7 +21,13 @@ from typing import Any, Final, cast
 from CasambiBt import Unit, UnitControl, UnitControlType
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
-from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import (
+    ATTR_UNIT_OF_MEASUREMENT,
+    STATE_ON,
+    STATE_UNAVAILABLE,
+    STATE_UNKNOWN,
+    UnitOfSpeed,
+)
 from homeassistant.core import (
     Event,
     EventStateChangedData,
@@ -28,6 +35,7 @@ from homeassistant.core import (
     State,
     callback,
 )
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory, EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
@@ -35,6 +43,7 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util.unit_conversion import SpeedConverter
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
@@ -42,6 +51,7 @@ from .const import (
     CONF_LOUVRE_AZIMUTH,
     CONF_RAIN_ENTITY,
     CONF_TEMPERATURE_ENTITY,
+    CONF_WIND_ENTITY,
     CONF_WIND_THRESHOLD,
     DEFAULT_LOUVRE_AZIMUTH,
     DEFAULT_WIND_THRESHOLD,
@@ -107,6 +117,28 @@ def entity_reports_rain(state: State | None) -> bool | None:
     try:
         return float(state.state) > 0
     except ValueError:
+        return None
+
+
+def entity_wind_kmh(state: State | None) -> float | None:
+    """Return a wind speed entity's reading in km/h, or None if it can't tell.
+
+    The reading is converted from the entity's unit of measurement; one
+    without a unit is taken as km/h.
+    """
+    if state is None:
+        return None
+    try:
+        value = float(state.state)
+    except ValueError:
+        return None
+    unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
+    if not unit or unit == UnitOfSpeed.KILOMETERS_PER_HOUR:
+        return value
+    try:
+        return SpeedConverter.convert(value, unit, UnitOfSpeed.KILOMETERS_PER_HOUR)
+    except HomeAssistantError:
+        _LOGGER.warning("Unsupported wind speed unit %s on %s", unit, state.entity_id)
         return None
 
 
@@ -177,8 +209,11 @@ async def async_setup_entry(
             for kind in ("rain", "presence")
         )
 
-    rain_entity = entry_option(config_entry, CONF_RAIN_ENTITY, None)
-    if (sensor_platforms or rain_entity) and (louvres or screens):
+    weather_entities = [
+        entry_option(config_entry, key, None)
+        for key in (CONF_RAIN_ENTITY, CONF_WIND_ENTITY)
+    ]
+    if (sensor_platforms or any(weather_entities)) and (louvres or screens):
         entities.append(
             CasambiWeatherProtectionSwitch(
                 casa_api, config_entry, sensor_platforms, louvres, screens
@@ -320,8 +355,8 @@ class CasambiSunTrackingSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
         """Compute the target louvre angle and move if needed."""
         if not self._attr_is_on or not self._api.available:
             return
-        if self._api.rain_active:
-            _LOGGER.debug("Sun tracking: raining, weather protection has priority")
+        if self._api.rain_active or self._api.wind_active:
+            _LOGGER.debug("Sun tracking: weather protection has priority")
             return
 
         unit = self._obj
@@ -444,11 +479,13 @@ class CasambiSensorEnableSwitch(CasambiBroadcastUnitEntity, SwitchEntity):
 class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, RestoreEntity):
     """Protects the pergola based on the weather readings.
 
-    While on: rain closes the louvres (sealed roof) and pauses sun
-    tracking; wind above the configured threshold retracts the screens.
-    Screens are not extended again automatically. Rain comes from the
-    sensor platform and from the rain entity chosen in the options, and
-    counts while either reports it; wind only from the sensor platform.
+    While on: rain closes the louvres (sealed roof); wind at or above the
+    configured threshold retracts the screens and closes the louvres, the
+    position in which the roof is rated for wind. Either one pauses sun
+    tracking until it is over. Screens are not extended again
+    automatically. Each reading comes from the sensor platform and from
+    the entity chosen in the options; rain counts while either reports it,
+    and the stronger of the two wind readings is used.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -477,6 +514,11 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         )
         self._platform_rain = False
         self._entity_rain = False
+        self._wind_entity: str | None = entry_option(
+            config_entry, CONF_WIND_ENTITY, None
+        )
+        self._platform_wind: float | None = None
+        self._entity_wind: float | None = None
 
     async def async_added_to_hass(self) -> None:
         """Restore state and start listening to the weather sources."""
@@ -493,6 +535,13 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
                 )
             )
             self._rain_entity_update(self.hass.states.get(self._rain_entity))
+        if self._wind_entity:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [self._wind_entity], self._wind_entity_changed
+                )
+            )
+            self._wind_entity_update(self.hass.states.get(self._wind_entity))
 
     async def async_will_remove_from_hass(self) -> None:
         """Stop listening to sensor platform updates."""
@@ -508,15 +557,67 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
             self._sensor_update(unit)
         if self._rain_entity:
             self._rain_entity_update(self.hass.states.get(self._rain_entity))
+        if self._wind_entity:
+            self._wind_entity_update(self.hass.states.get(self._wind_entity))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable weather protection."""
         self._attr_is_on = False
         self._api.rain_active = False
+        self._api.wind_active = False
         self._platform_rain = False
         self._entity_rain = False
+        self._platform_wind = None
+        self._entity_wind = None
         self._wind_latched = False
         self.async_write_ha_state()
+
+    @callback
+    def _wind_entity_changed(self, event: Event[EventStateChangedData]) -> None:
+        self._wind_entity_update(event.data["new_state"])
+
+    @callback
+    def _wind_entity_update(self, state: State | None) -> None:
+        """Evaluate the wind entity; keep the last reading when it can't tell."""
+        if not self._attr_is_on:
+            return
+        wind_kmh = entity_wind_kmh(state)
+        if wind_kmh is not None:
+            self._entity_wind = wind_kmh
+            self._update_wind()
+
+    @callback
+    def _update_wind(self) -> None:
+        """Secure the pergola when the wind reaches the threshold.
+
+        Latched with hysteresis, so a gusty wind around the threshold does
+        not send repeated commands.
+        """
+        readings = [
+            w for w in (self._platform_wind, self._entity_wind) if w is not None
+        ]
+        if not readings:
+            return
+        wind_kmh = max(readings)
+        threshold = entry_option(
+            self._config_entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
+        )
+        if wind_kmh >= threshold and not self._wind_latched:
+            self._wind_latched = True
+            self._api.wind_active = True
+            _LOGGER.info(
+                "Weather protection: wind %.1f km/h, retracting screens and "
+                "closing louvres",
+                wind_kmh,
+            )
+            for screen in self._screens:
+                self.hass.async_create_task(self._async_retract_screen(screen))
+            for louvre in self._louvres:
+                self.hass.async_create_task(self._async_close_louvre(louvre))
+        elif wind_kmh < threshold * WIND_HYSTERESIS and self._wind_latched:
+            self._wind_latched = False
+            self._api.wind_active = False
+            _LOGGER.info("Weather protection: wind dropped to %.1f km/h", wind_kmh)
 
     @callback
     def _rain_entity_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -560,19 +661,8 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
 
         wind_raw = cache.get(PACKET_WIND)
         if wind_raw is not None:
-            wind_kmh = wind_raw / 4
-            threshold = entry_option(
-                self._config_entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
-            )
-            if wind_kmh >= threshold and not self._wind_latched:
-                self._wind_latched = True
-                _LOGGER.info(
-                    "Weather protection: wind %.1f km/h, retracting screens", wind_kmh
-                )
-                for screen in self._screens:
-                    self.hass.async_create_task(self._async_retract_screen(screen))
-            elif wind_kmh < threshold * WIND_HYSTERESIS:
-                self._wind_latched = False
+            self._platform_wind = wind_raw / 4
+            self._update_wind()
 
     async def _async_close_louvre(self, unit: Unit) -> None:
         await self._async_casa_command(self._api.casa.setSlider(unit, 0))
