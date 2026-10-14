@@ -56,7 +56,7 @@ which this integration uses):
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
 | Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27) | Cover (blind) with position + stop, plus one raw diagnostic sensor per channel |
-| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position (estimated from the travel time while moving, with opening/closing), stop = SetLevel just ahead of the estimated position |
+| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position (estimated from the travel time while moving, with opening/closing), stop = clear the start/stop bit for a button run, SetLevel just ahead of the estimated position otherwise |
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (written with `turnOn`/`turnOff`) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
 
@@ -87,7 +87,7 @@ physically closed the unit reports `slider: 0` and the cover shows closed.
 
 ### Screen stop — only a target ahead of the screen is honoured
 
-Four captures on the SO! V4.1 at device id 1 (5-byte states,
+Five captures on the SO! V4.1 at device id 1 (5-byte states,
 little-endian; dimmer = bits 28–35 = the *target*, `$toggle` = bit 36):
 
 ```text
@@ -111,21 +111,47 @@ little-endian; dimmer = bits 28–35 = the *target*, `$toggle` = bit 36):
 18:04:08.453  sent      SetLevel ff               close
 18:04:17.299  sent      SetLevel 41               position 65
               ... the screen stopped there
+
+# 5. The wall button (24VDC_4CH_PB, button 2 is bound to this screen)
+19:19:17.516  press
+19:19:17.745  reported  828b080010                target 0 (stale), bit 1 -> extends
+19:19:23.352  press
+19:19:23.586  reported  818b080000                bit 0 -> stops
+19:19:23.757  reported  818b08a002                target 42 = where it stopped
+19:19:26.558  press
+19:19:26.931  reported  828b08a012                target 42, bit 1 -> retracts
 ```
+
+Capture 5 explains the bit: it is a run flag driven like the wall button.
+Setting it (0 -> 1) starts the motor in the direction opposite its last
+run, clearing it (1 -> 0) stops the motor, which then reports where it
+stopped. A position command leaves the bit at 0, which is why setting it
+during such a run (capture 1) reversed the screen. The 35 s travel model is
+confirmed by it too: 5.8 s of extension is raw 42.3, and the screen
+reported 42.
 
 So the toggle reverses, and the vendor app has no working stop either. A
 position sent while the screen moves is honoured only when it lies ahead
 of it: 52 at 7.1 s was just behind the screen and ignored, 65 at 8.8 s was
 ahead and stopped it. `CasambiScreenCover` therefore stops by sending the
 estimated position 1.5 s ahead in the direction of travel (rounded further
-along), and sends nothing at rest or within that margin of the target.
+along), and sends nothing at rest or within that margin of the target. When
+the bit is set — a run started by the wall button or the app — it clears
+the bit instead, exactly like the button. Such a run is also tracked for
+the displayed position: it heads for the end opposite the last run, the
+reported target is ignored while the bit is set, and the estimate freezes
+when the bit clears. Confirmed on hardware for both stops.
 
 Because the reported dimmer is the target, a close used to show "closed"
 at once. The cover estimates the position from the timestamp of each
 target change and the travel time on sensor channels 1 and 2 (35000 ms,
 the default until seen), reports opening or closing meanwhile, and
 refreshes once a second until the estimate arrives. The louvres' onoff
-control is named `$startstop` and keeps the toggle-based stop.
+bit (`$startstop`) behaves the same way: setting it while they moved after
+a SetSlider reversed them (18:24:42 target 0 -> 255, 18:25:21 target
+255 -> 0). Their stop therefore only clears the bit of a button run; a run
+started from Home Assistant is left alone until their travel time is
+known for an aim-ahead stop.
 
 ### Real-world network layout
 

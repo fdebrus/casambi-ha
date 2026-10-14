@@ -192,12 +192,21 @@ class CasambiCoverGroup(CasambiVerticalCover, CasambiNetworkGroup):
 
 
 class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
-    """Base class for motor-driven covers with an optional start/stop toggle.
+    """Base class for motor-driven covers with a start/stop bit.
 
-    The Winsol louvre (slider $pos + onoff $startstop) is stopped through
-    its writable ONOFF control. The Winsol SO! screen carries one too
-    (onoff $toggle), but it reverses the motion, so the screen cover
-    withdraws the stop feature.
+    Winsol louvres (onoff $startstop) and SO! screens (onoff $toggle) carry
+    a writable ONOFF bit that works like their wall button: setting it
+    (0 -> 1) starts the motor in the direction opposite to its last run,
+    clearing it (1 -> 0) stops it, after which the motor reports where it
+    stopped. Captured on a SO! V4.1 driven by its wall button: press, the
+    bit reads 1 and the screen extends; press, the bit reads 0 and the
+    screen reports target 42 (5.8 s of a 35 s travel); press, the bit reads
+    1 and it retracts.
+
+    A motion started with a position command leaves the bit at 0, and
+    setting it then reverses the motor instead of stopping it. So stop
+    clears the bit when it is set and otherwise leaves the motion to the
+    subclass.
     """
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
@@ -220,12 +229,26 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
                 self._attr_supported_features or CoverEntityFeature(0)
             ) | CoverEntityFeature.STOP
 
+    def _toggle_running(self, unit: Unit | None = None) -> bool:
+        """Return True if the start/stop bit is set, i.e. a button-style run."""
+        control = self._toggle_control
+        state = (unit or self._obj).state
+        if control is None or state is None or state.raw_state is None:
+            return False
+        byte_index, bit_index = divmod(control.offset, 8)
+        raw = state.raw_state
+        return byte_index < len(raw) and bool(raw[byte_index] >> bit_index & 1)
+
     async def async_stop_cover(self, **kwargs: Any) -> None:
-        """Stop the cover by triggering the start/stop toggle."""
-        if self._toggle_control is None:
+        """Stop a run started with the start/stop bit by clearing the bit.
+
+        Setting the bit would reverse the motor, so a motion started with a
+        position command is not touched here.
+        """
+        if self._toggle_control is None or not self._toggle_running():
             return
         await self._async_casa_command(
-            self._api.casa.setControlValue(self._obj, self._toggle_control, 1)
+            self._api.casa.setControlValue(self._obj, self._toggle_control, 0)
         )
 
 
@@ -280,14 +303,15 @@ class CasambiScreenCover(CasambiMotorCover):
     full travel time the motor reports on its sensor channels (35 s), and
     the cover reports opening or closing until the estimate arrives.
 
-    Its onoff control (``$toggle``) reverses the motion, and the Casambi
-    app's own stop reverses it too. A new position sent while it moves is
-    only honoured when it lies ahead of the screen: position 52 sent 7.1 s
-    into a close (just behind it) was ignored and the screen kept
-    extending, position 65 sent 8.8 s in (ahead of it) stopped it there
-    (SO! V4.1 captures). Stop therefore sends the estimated position plus
-    a margin in the direction of travel, so the screen halts slightly past
-    the point where Stop was pressed.
+    A run started by the wall button or the app sets the start/stop bit,
+    and stop clears it like the button does. A run started with a position
+    command can only be stopped with another position, and a position sent
+    while it moves is only honoured when it lies ahead of the screen:
+    position 52 sent 7.1 s into a close (just behind it) was ignored and
+    the screen kept extending, position 65 sent 8.8 s in (ahead of it)
+    stopped it there (SO! V4.1 captures). Stop then sends the estimated
+    position plus a margin in the direction of travel, so the screen halts
+    slightly past the point where Stop was pressed.
     """
 
     _attr_device_class = CoverDeviceClass.SHADE
@@ -307,6 +331,8 @@ class CasambiScreenCover(CasambiMotorCover):
         self._move_from = 0.0
         self._move_start: float | None = None
         self._cancel_tick: Callable[[], None] | None = None
+        self._button_run = False
+        self._last_extending: bool | None = None
         self._track_motion(unit)
 
     def _travel_seconds(self, extending: bool) -> float:
@@ -339,6 +365,18 @@ class CasambiScreenCover(CasambiMotorCover):
             return False
         return True
 
+    def _start_motion(self, target: int, now: float) -> bool:
+        """Set off from the current estimate towards ``target``."""
+        estimate = self._estimate(now)
+        previous = self._target
+        self._target = target
+        if previous is None or estimate is None:
+            return False
+        self._move_from = estimate
+        self._move_start = now
+        self._last_extending = target > estimate
+        return True
+
     def _track_motion(self, unit: Unit) -> bool:
         """Follow a state update; return True if a new motion started."""
         state = unit.state
@@ -350,19 +388,35 @@ class CasambiScreenCover(CasambiMotorCover):
             TRAVEL_CHANNEL_RETRACT,
         ):
             self._travel_ms[decoded[0]] = decoded[1]
+        now = monotonic()
+
+        button_run = self._toggle_running(unit)
+        if button_run != self._button_run:
+            self._button_run = button_run
+            if button_run:
+                # Started like the wall button: the reported target is stale
+                # and the screen heads for the end opposite its last run.
+                estimate = self._estimate(now)
+                if self._last_extending is not None:
+                    extending = not self._last_extending
+                else:
+                    extending = (estimate or 0) < CASA_RAW_MAX / 2
+                return self._start_motion(CASA_RAW_MAX if extending else 0, now)
+            # The run ended: freeze where the screen is. The target in this
+            # same update is still the stale one; the next reports where it
+            # actually stopped.
+            estimate = self._estimate(now)
+            if estimate is not None:
+                self._target = round(estimate)
+            self._move_start = None
+            return False
+        if button_run:
+            return False
+
         target = state.dimmer
         if target is None or target == self._target:
             return False
-        previous = self._target
-        now = monotonic()
-        estimate = self._estimate(now)
-        self._target = target
-        if previous is None or estimate is None:
-            return False
-        # A new target: the screen sets off from where it is now.
-        self._move_from = estimate
-        self._move_start = now
-        return True
+        return self._start_motion(target, now)
 
     @callback
     def _change_callback(self, unit: Unit) -> None:
@@ -385,13 +439,18 @@ class CasambiScreenCover(CasambiMotorCover):
             self._cancel_tick = None
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
-        """Stop the screen by sending a position just ahead of it.
+        """Stop the screen.
 
-        The screen ignores a position behind it while it moves, so the
-        target is the estimated position plus a margin in the direction of
-        travel. Nothing is sent when the screen is at rest or would reach
+        A run started by the wall button or the app is stopped by clearing
+        the start/stop bit. A run started with a position command is
+        stopped by a position just ahead of the screen, since it ignores
+        one behind it: the estimated position plus a margin in the direction
+        of travel. Nothing is sent when the screen is at rest or would reach
         its target within the margin anyway.
         """
+        if self._toggle_running():
+            await super().async_stop_cover(**kwargs)
+            return
         if not self._moving() or self._target is None:
             return
         extending = self._target > self._move_from
@@ -414,10 +473,10 @@ class CasambiScreenCover(CasambiMotorCover):
         While the screen travels this is the estimated position rather
         than the reported target.
         """
-        if self._moving():
-            estimate = self._estimate(monotonic())
-            if estimate is not None:
-                return 100 - round(estimate * 100 / CASA_RAW_MAX)
+        self._moving()
+        estimate = self._estimate(monotonic())
+        if estimate is not None:
+            return 100 - round(estimate * 100 / CASA_RAW_MAX)
         unit = self._obj
         if unit.state is not None and unit.state.dimmer is not None:
             return 100 - round(unit.state.dimmer * 100 / CASA_RAW_MAX)
