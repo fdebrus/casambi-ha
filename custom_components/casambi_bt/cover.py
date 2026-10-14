@@ -245,6 +245,12 @@ class CasambiScreenCover(CasambiMotorCover):
 
     E.g. the Winsol SO! screen: the fixture's dimmer control is labeled
     "Screen Position".
+
+    The dimmer runs the opposite way round to Home Assistant: Casambi
+    reports 0 for a fully retracted (open) screen and 255 for a fully
+    extended (closed) one, where Home Assistant uses 100 for open and 0
+    for closed. Confirmed on Winsol SO! V4.1 hardware, where open and
+    close were swapped before this inversion.
     """
 
     _attr_device_class = CoverDeviceClass.SHADE
@@ -256,23 +262,25 @@ class CasambiScreenCover(CasambiMotorCover):
 
     @property
     def current_cover_position(self) -> int | None:
-        """Return the screen position (0-100)."""
+        """Return the screen position (0-100, inverted from the dimmer)."""
         unit = self._obj
         if unit.state is not None and unit.state.dimmer is not None:
-            return round(unit.state.dimmer * 100 / CASA_RAW_MAX)
+            return 100 - round(unit.state.dimmer * 100 / CASA_RAW_MAX)
         return None
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open (retract) the screen."""
-        await self._async_casa_command(self._api.casa.setLevel(self._obj, CASA_RAW_MAX))
+        await self._async_casa_command(self._api.casa.setLevel(self._obj, 0))
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close (extend) the screen."""
-        await self._async_casa_command(self._api.casa.setLevel(self._obj, 0))
+        await self._async_casa_command(self._api.casa.setLevel(self._obj, CASA_RAW_MAX))
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the screen to a specific position (0-100)."""
         position = kwargs[ATTR_POSITION]
         await self._async_casa_command(
-            self._api.casa.setLevel(self._obj, round(position * CASA_RAW_MAX / 100))
+            self._api.casa.setLevel(
+                self._obj, round((100 - position) * CASA_RAW_MAX / 100)
+            )
         )
