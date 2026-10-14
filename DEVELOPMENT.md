@@ -95,7 +95,8 @@ controls), one `Winsol Mono` dimmer for the spots (`PWM/1ch/Dim`), one
 `Winsol On-Off` relay (`EXT/Elements`, a single ONOFF — it switches the
 pergola heating and is exposed as a `switch`), one
 `24VDC_4CH_PB_Winsol` push-button interface (mode `PushButton`, one
-read-only 8-bit UNKNOWN control — the source of the wall-switch events),
+read-only 8-bit UNKNOWN control — the source of the wall-switch events, see
+below),
 and two `Repeater` units (mode `Sensor`, one UNKNOWN control). **No sensor
 platform was present**, so the weather entities and the weather
 protection switch do not appear on such a network; whether the pack's rain
@@ -108,6 +109,33 @@ from 17 to 30 over a sunny day (temperature-like), channels 2, 3 and 4 held
 0, 15 and 50. Each channel is exposed as a raw diagnostic sensor on the
 louvre device so they can be identified (e.g. by wetting the rain sensor
 and watching which channel reacts) before any semantics are attached.
+
+### Wired push buttons report on the input stream only
+
+Switch events arrive as type-7 packets holding INVOCATION frames (flags u16,
+opcode u8, origin u16, target u16, age u16, payload). EnOcean switches send
+each action twice in one packet: on the 0x06 button stream (opcode 29–36)
+and on the 0x12 input stream (opcode 64–71, payload[0] = 0x01 press,
+0x02 release, 0x09 hold, 0x0C release after hold). The library therefore
+ignores 0x12 presses and releases and takes them from 0x06.
+
+The `24VDC_4CH_PB_Winsol` never uses 0x06, so every short press was lost.
+Captured on unit 4 (button index = opcode − 0x40, payload[1] repeats it;
+`age` grows on retransmits of the same `origin`):
+
+```text
+1002 40 04b4 0412 0003 0100   button 1 press
+1002 40 04b4 0412 0006 0100   retransmit
+1002 40 04b6 0412 0004 0200   button 1 release
+1002 43 04cc 0412 0002 0103   button 4 press
+```
+
+`switch_decoder.py` subclasses the library decoder and swaps it into
+`CasambiBt._client` at import: 0x12 presses and releases are accepted from
+units that have never been seen on 0x06, and units that use 0x06 keep the
+library behaviour. Pressing the buttons did not move any motor, so on this
+pack they are free for Home Assistant automations. The override can go once
+the library handles input-only units itself.
 
 ### Winsol Lamel Intelligent (Star) — decoded, not implemented
 

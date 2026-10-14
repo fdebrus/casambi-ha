@@ -31,6 +31,7 @@ from homeassistant.exceptions import (
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.httpx_client import get_async_client
 
+from . import switch_decoder
 from .const import (
     CONF_DEMO,
     DOMAIN,
@@ -44,6 +45,10 @@ from .const import (
 from .demo import DemoCasambi
 
 _LOGGER: Final = logging.getLogger(__name__)
+
+# Wired push-button interfaces only report on the input stream, which the
+# library's decoder drops for presses and releases.
+switch_decoder.install()
 
 type CasambiConfigEntry = ConfigEntry[CasambiApi]
 

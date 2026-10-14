@@ -54,7 +54,7 @@ Units are classified automatically by their control layout (`classify.py`) — m
 | **Winsol SO! screen** | `cover` (shade) with position and Stop |
 | **Winsol On-Off relay** (e.g. the pergola heating) | `switch` |
 | **Sensor Platform V4** (weather option) | `sensor`: wind speed (km/h), solar radiation, illuminance (lx); `binary_sensor`: rain, motion, presence; `switch`: per-element enables (wind/rain/light/motion) |
-| Wall switches / remotes (e.g. Xpress) | `event` entities per button (created on first press) + bus events |
+| Wall switches / remotes (e.g. Xpress, EnOcean) and wired push-button interfaces (e.g. Winsol `24VDC_4CH_PB`) | `event` entities per button (created on first press) + bus events |
 | Network | `binary_sensor` connectivity status |
 
 > [!NOTE]
