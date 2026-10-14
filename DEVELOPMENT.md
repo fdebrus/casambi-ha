@@ -78,8 +78,10 @@ nine-shutter installation, and confirmed here on a Winsol SO! Climate
 pergola with three SO! V4.1 screens: before the inversion, *open* extended
 the screen and *close* retracted it.
 
-The louvre slider (0–142°) is a different mechanism and has **not** been
-checked for direction yet.
+The louvre slider (0–142°) is **not** inverted: slider 0 is the louvres
+closed flat into a sealed roof, 142 fully open, matching the Home Assistant
+position straight through. Confirmed on the same pergola — with the roof
+physically closed the unit reports `slider: 0` and the cover shows closed.
 
 ### Real-world network layout
 
