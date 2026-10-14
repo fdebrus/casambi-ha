@@ -17,6 +17,8 @@ from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_POSITION,
     DOMAIN as COVER_DOMAIN,
+    SERVICE_CLOSE_COVER,
+    SERVICE_OPEN_COVER,
     SERVICE_SET_COVER_POSITION,
     SERVICE_STOP_COVER,
     CoverEntityFeature,
@@ -453,6 +455,140 @@ async def test_screen_button_run(
         clock[0] = 1110.0
         await report("828b08a012")
         assert hass.states.get(entity_id).state == "opening"
+
+
+def _bit_writes(mock_casambi: MagicMock) -> list[tuple[int, int]]:
+    return [
+        (call.args[1].offset, call.args[2])
+        for call in mock_casambi.setControlValue.await_args_list
+    ]
+
+
+async def test_screen_open_close_like_wall_button(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that open/close run the screen like its wall button.
+
+    The start/stop bit sends the motor opposite its last run, so open and
+    close set it when that is the way asked for (and stop clears it), and
+    fall back to a position command when it would go the wrong way.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        async def call(service: str) -> None:
+            await hass.services.async_call(
+                COVER_DOMAIN, service, {ATTR_ENTITY_ID: entity_id}, blocking=True
+            )
+
+        # Retracted (open) and at rest.
+        await report("818b080000")
+        clock[0] = 1100.0
+
+        # Close from the open end: only the bit can go down -> set it.
+        await call(SERVICE_CLOSE_COVER)
+        assert _bit_writes(mock_casambi) == [(36, 1)]
+        mock_casambi.setLevel.assert_not_awaited()
+        await report("828b080010")
+        assert hass.states.get(entity_id).state == "closing"
+
+        # Stop clears the bit at once; the screen reports raw 42.
+        clock[0] = 1105.8
+        await call(SERVICE_STOP_COVER)
+        assert _bit_writes(mock_casambi)[-1] == (36, 0)
+        await report("818b080000")
+        await report("818b08a002")
+
+        # Last run went down, so the bit goes up: open sets it.
+        clock[0] = 1110.0
+        await call(SERVICE_OPEN_COVER)
+        assert _bit_writes(mock_casambi)[-1] == (36, 1)
+        await report("828b08a012")
+        assert hass.states.get(entity_id).state == "opening"
+        clock[0] = 1111.6
+        await call(SERVICE_STOP_COVER)
+        assert _bit_writes(mock_casambi)[-1] == (36, 0)
+        await report("818b080010")
+        await report("818b08e001")  # stopped at raw 30
+
+        # Last run went up, so the bit would go down: open falls back to a
+        # position command ...
+        clock[0] = 1120.0
+        await call(SERVICE_OPEN_COVER)
+        mock_casambi.setLevel.assert_awaited_once()
+        assert mock_casambi.setLevel.await_args.args[1] == 0
+        assert len(_bit_writes(mock_casambi)) == 4
+
+        # ... and close, which goes down, uses the bit again.
+        await report("818b080000")
+        clock[0] = 1200.0
+        await call(SERVICE_CLOSE_COVER)
+        assert _bit_writes(mock_casambi)[-1] == (36, 1)
+
+
+async def test_louvres_open_close_like_wall_button(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the louvres also run and stop like their wall button."""
+    await _setup(hass, mock_config_entry)
+    entity_id = _entity_id(
+        hass,
+        COVER_DOMAIN,
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover",
+    )
+    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+    async def report(packet: str) -> None:
+        louvre.setStateFromBytes(bytes.fromhex(packet))
+        handler(louvre)
+        await hass.async_block_till_done()
+
+    async def call(service: str) -> None:
+        await hass.services.async_call(
+            COVER_DOMAIN, service, {ATTR_ENTITY_ID: entity_id}, blocking=True
+        )
+
+    # Captured Lamel states: fully open (slider 255) at rest.
+    await report("020000f00f")
+    await call(SERVICE_CLOSE_COVER)
+    assert _bit_writes(mock_casambi) == [(36, 1)]
+    mock_casambi.setSlider.assert_not_awaited()
+
+    await report("410100f01f")
+    assert hass.states.get(entity_id).state == "closing"
+    await call(SERVICE_STOP_COVER)
+    assert _bit_writes(mock_casambi)[-1] == (36, 0)
+
+    # The bit clears with the stale rest position (255), then the louvres
+    # report where they stopped (slider 103). The last run closed, so open
+    # uses the bit, which now goes the other way.
+    await report("410100f00f")
+    await report("4101007006")
+    await call(SERVICE_OPEN_COVER)
+    assert _bit_writes(mock_casambi)[-1] == (36, 1)
+    mock_casambi.setSlider.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

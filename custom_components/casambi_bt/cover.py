@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from abc import ABCMeta
-from collections.abc import Callable
+from abc import ABCMeta, abstractmethod
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
 import logging
 import math
@@ -203,11 +203,19 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
     screen reports target 42 (5.8 s of a 35 s travel); press, the bit reads
     1 and it retracts.
 
-    A motion started with a position command leaves the bit at 0, and
-    setting it then reverses the motor instead of stopping it. So stop
-    clears the bit when it is set and otherwise leaves the motion to the
-    subclass.
+    The motor also starts opposite its last run after a position command
+    (a SetLevel close followed by the bit retracted the screen; a SetSlider
+    close followed by the bit opened the louvres). Open and close therefore
+    work like the wall button whenever that direction is the one asked for:
+    they set the bit, and stop clears it again at once. When the bit would
+    start the wrong way, they fall back to a position command, which
+    leaves the bit at 0; setting it during such a run would reverse the
+    motor, so stop leaves that motion to the subclass.
     """
+
+    # Raw position (0-255) of the fully open and fully closed ends.
+    _raw_open: int = CASA_RAW_MAX
+    _raw_closed: int = 0
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a motor cover entity."""
@@ -228,6 +236,92 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             self._attr_supported_features = (
                 self._attr_supported_features or CoverEntityFeature(0)
             ) | CoverEntityFeature.STOP
+
+        # Direction of the last run (raw position rising) and the position
+        # the motor last rested at, to predict where the bit sends it.
+        self._last_raising: bool | None = None
+        self._rest_raw: int | None = None
+        self._was_running = False
+        self._note_direction(unit)
+
+    @abstractmethod
+    def _raw_position(self, unit: Unit) -> int | None:
+        """Return the raw position (0-255) the unit reports."""
+
+    @abstractmethod
+    def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
+        """Return the command moving the unit to a raw position."""
+
+    def _note_direction(self, unit: Unit) -> None:
+        """Follow the direction of runs and the rest position."""
+        running = self._toggle_running(unit)
+        raw = self._raw_position(unit)
+        if running and not self._was_running:
+            predicted = self._toggle_direction()
+            if predicted is not None:
+                self._last_raising = predicted
+        elif (
+            not running
+            and not self._was_running
+            and raw is not None
+            and self._rest_raw is not None
+            and raw != self._rest_raw
+        ):
+            self._last_raising = raw > self._rest_raw
+        self._was_running = running
+        if not running and raw is not None:
+            self._rest_raw = raw
+
+    def _toggle_direction(self) -> bool | None:
+        """Return whether setting the bit now raises the raw position."""
+        position = self._rest_raw
+        if position is None:
+            return None
+        if position <= 0:
+            return True
+        if position >= CASA_RAW_MAX:
+            return False
+        if self._last_raising is None:
+            return None
+        return not self._last_raising
+
+    @callback
+    def _change_callback(self, unit: Unit) -> None:
+        self._note_direction(unit)
+        super()._change_callback(unit)
+
+    async def _drive_to_end(self, raw_end: int) -> None:
+        """Run to an end like the wall button when the bit goes that way."""
+        control = self._toggle_control
+        raising = raw_end > (self._rest_raw if self._rest_raw is not None else -1)
+        if control is not None and not self._api.demo:
+            if self._toggle_running():
+                if self._last_raising == (raw_end == CASA_RAW_MAX):
+                    return
+                # Like pressing the button twice: stop, then run back.
+                await self._async_casa_command(
+                    self._api.casa.setControlValue(self._obj, control, 0)
+                )
+                await self._async_casa_command(
+                    self._api.casa.setControlValue(self._obj, control, 1)
+                )
+                return
+            if self._rest_raw == raw_end:
+                return
+            if self._toggle_direction() == raising:
+                await self._async_casa_command(
+                    self._api.casa.setControlValue(self._obj, control, 1)
+                )
+                return
+        await self._async_casa_command(self._send_position(raw_end))
+
+    async def async_open_cover(self, **kwargs: Any) -> None:
+        """Open the cover, like the wall button where possible."""
+        await self._drive_to_end(self._raw_open)
+
+    async def async_close_cover(self, **kwargs: Any) -> None:
+        """Close the cover, like the wall button where possible."""
+        await self._drive_to_end(self._raw_closed)
 
     def _toggle_running(self, unit: Unit | None = None) -> bool:
         """Return True if the start/stop bit is set, i.e. a button-style run."""
@@ -259,6 +353,12 @@ class CasambiLouvreCover(CasambiMotorCover):
     the wire, normalized to 0-255 by the library).
     """
 
+    def _raw_position(self, unit: Unit) -> int | None:
+        return unit.state.slider if unit.state is not None else None
+
+    def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
+        return self._api.casa.setSlider(self._obj, raw)
+
     @property
     def current_cover_position(self) -> int | None:
         """Return the louvre position (0-100)."""
@@ -267,15 +367,15 @@ class CasambiLouvreCover(CasambiMotorCover):
             return round(unit.state.slider * 100 / CASA_RAW_MAX)
         return None
 
-    async def async_open_cover(self, **kwargs: Any) -> None:
-        """Open the louvres fully."""
-        await self._async_casa_command(
-            self._api.casa.setSlider(self._obj, CASA_RAW_MAX)
-        )
+    @property
+    def is_opening(self) -> bool:
+        """Return True while the louvres open on a button-style run."""
+        return self._toggle_running() and self._last_raising is True
 
-    async def async_close_cover(self, **kwargs: Any) -> None:
-        """Close the louvres."""
-        await self._async_casa_command(self._api.casa.setSlider(self._obj, 0))
+    @property
+    def is_closing(self) -> bool:
+        """Return True while the louvres close on a button-style run."""
+        return self._toggle_running() and self._last_raising is False
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the louvres to a specific position (0-100)."""
@@ -332,8 +432,8 @@ class CasambiScreenCover(CasambiMotorCover):
         self._move_start: float | None = None
         self._cancel_tick: Callable[[], None] | None = None
         self._button_run = False
-        self._last_extending: bool | None = None
         self._track_motion(unit)
+        self._note_direction(unit)
 
     def _travel_seconds(self, extending: bool) -> float:
         """Return the full-range travel time in the given direction."""
@@ -374,7 +474,7 @@ class CasambiScreenCover(CasambiMotorCover):
             return False
         self._move_from = estimate
         self._move_start = now
-        self._last_extending = target > estimate
+        self._last_raising = target > estimate
         return True
 
     def _track_motion(self, unit: Unit) -> bool:
@@ -397,8 +497,8 @@ class CasambiScreenCover(CasambiMotorCover):
                 # Started like the wall button: the reported target is stale
                 # and the screen heads for the end opposite its last run.
                 estimate = self._estimate(now)
-                if self._last_extending is not None:
-                    extending = not self._last_extending
+                if self._last_raising is not None:
+                    extending = not self._last_raising
                 else:
                     extending = (estimate or 0) < CASA_RAW_MAX / 2
                 return self._start_motion(CASA_RAW_MAX if extending else 0, now)
@@ -417,6 +517,28 @@ class CasambiScreenCover(CasambiMotorCover):
         if target is None or target == self._target:
             return False
         return self._start_motion(target, now)
+
+    _raw_open = 0
+    _raw_closed = CASA_RAW_MAX
+
+    def _raw_position(self, unit: Unit) -> int | None:
+        return unit.state.dimmer if unit.state is not None else None
+
+    def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
+        return self._api.casa.setLevel(self._obj, raw)
+
+    def _note_direction(self, unit: Unit) -> None:
+        """Keep the rest position from the motion estimate.
+
+        The screen tracks its runs itself (``_track_motion``), which also
+        sets the direction of the last one.
+        """
+        if not hasattr(self, "_target"):
+            return
+        self._was_running = self._toggle_running(unit)
+        if self._was_running or self._moving():
+            return
+        self._rest_raw = self._target
 
     @callback
     def _change_callback(self, unit: Unit) -> None:
@@ -499,14 +621,6 @@ class CasambiScreenCover(CasambiMotorCover):
             and self._target is not None
             and self._target > self._move_from
         )
-
-    async def async_open_cover(self, **kwargs: Any) -> None:
-        """Open (retract) the screen."""
-        await self._async_casa_command(self._api.casa.setLevel(self._obj, 0))
-
-    async def async_close_cover(self, **kwargs: Any) -> None:
-        """Close (extend) the screen."""
-        await self._async_casa_command(self._api.casa.setLevel(self._obj, CASA_RAW_MAX))
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the screen to a specific position (0-100)."""
