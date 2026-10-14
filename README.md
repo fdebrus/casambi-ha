@@ -64,11 +64,18 @@ Units are classified automatically by their control layout (`classify.py`) — m
 > **open** retracts the screen and **close** extends it. Confirmed on SO!
 > V4.1 hardware.
 >
-> **Screen stop.** The screen's own start/stop control reverses the motion
-> instead of stopping it, so **Stop** sends the position the screen has
-> reached, estimated from when it started moving and the travel time it
-> reports (35 s end to end). Expect it to settle within a few centimetres
-> of where you pressed.
+> **Screens have no Stop.** A Winsol SO! screen cannot be stopped
+> mid-travel over Casambi: its start/stop control reverses the motion and
+> a new position sent while it moves is ignored until it arrives — the
+> Casambi app's own stop reverses it too. Home Assistant therefore offers
+> open, close and set position for screens, but no Stop. The louvres keep
+> theirs.
+>
+> **Screen position while moving.** A screen reports where it is heading,
+> not where it is. While it moves, Home Assistant shows it as *opening* or
+> *closing* with a position estimated from the 35 s travel time it
+> reports, refreshed every second, and settles on the target once that
+> time has passed.
 
 ## Demo mode
 

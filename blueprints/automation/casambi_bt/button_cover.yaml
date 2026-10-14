@@ -5,7 +5,8 @@ blueprint:
 
     A short press toggles: the cover opens when it is below the threshold and
     closes when it is above. Holding the button stops it wherever it is —
-    handy for parking the louvres at a partial angle.
+    handy for parking the louvres at a partial angle. Winsol SO! screens
+    cannot be stopped mid-travel, so holding does nothing on a screen.
   domain: automation
   author: fdebrus
   source_url: https://github.com/fdebrus/casambi-ha/blob/main/blueprints/automation/casambi_bt/button_cover.yaml
@@ -91,6 +92,9 @@ actions:
           - condition: trigger
             id: hold
         sequence:
+          # Covers without a stop (Winsol SO! screens) reject this; that
+          # must not fail the automation.
           - action: cover.stop_cover
+            continue_on_error: true
             target:
               entity_id: !input cover
