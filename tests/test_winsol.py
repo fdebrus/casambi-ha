@@ -1,7 +1,7 @@
 """Tests for Winsol pergola support: louvre cover, screen cover, sensors."""
 
 from dataclasses import replace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from CasambiBt import Unit, UnitControl, UnitControlType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -296,6 +296,101 @@ async def test_screen_cover(
     assert target.uuid == WINSOL_SCREEN_UUID
     # 80% open -> 20% extended -> raw 51.
     assert value == 51
+
+
+async def test_screen_stop_sends_reached_position(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that stop holds the screen where it is instead of reversing it.
+
+    On a Winsol SO! the onoff ($toggle) control reverses the motion, so
+    stop must send the reached position rather than toggle it.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        async def stop() -> None:
+            await hass.services.async_call(
+                COVER_DOMAIN,
+                SERVICE_STOP_COVER,
+                {ATTR_ENTITY_ID: entity_id},
+                blocking=True,
+            )
+
+        # States captured on a SO! V4.1: at rest retracted (channel 1 =
+        # 35000 ms travel), then extending after a close (target 255).
+        await report("818b080000")
+        # Retracting from the fixture's 64 takes under 9 s; then it rests.
+        clock[0] = 1020.0
+        await stop()
+        mock_casambi.setLevel.assert_not_awaited()
+
+        clock[0] = 1030.0
+        await report("818b08f00f")
+        clock[0] = 1037.0
+        await stop()
+
+    mock_casambi.setControlValue.assert_not_awaited()
+    mock_casambi.setLevel.assert_awaited_once()
+    _, value = mock_casambi.setLevel.await_args.args
+    # 7 s + 0.3 s latency of a 35 s full travel from 0 -> raw 53.
+    assert value == round(7.3 / 35 * 255)
+
+
+async def test_screen_stop_after_motion_ends_does_nothing(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that stop leaves a screen alone once it has reached its target."""
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        screen.setStateFromBytes(bytes.fromhex("818b080000"))
+        handler(screen)
+        screen.setStateFromBytes(bytes.fromhex("818b08f00f"))
+        handler(screen)
+        await hass.async_block_till_done()
+
+        clock[0] = 1040.0
+        await hass.services.async_call(
+            COVER_DOMAIN,
+            SERVICE_STOP_COVER,
+            {ATTR_ENTITY_ID: entity_id},
+            blocking=True,
+        )
+
+    mock_casambi.setLevel.assert_not_awaited()
+    mock_casambi.setControlValue.assert_not_awaited()
 
 
 async def test_environment_sensors(
