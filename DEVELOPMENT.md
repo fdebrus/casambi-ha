@@ -57,7 +57,7 @@ which this integration uses):
 |---|---|---|---|
 | Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27) | Cover (blind) with position + stop, plus one raw diagnostic sensor per channel |
 | Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position (estimated from the travel time while moving, with opening/closing), stop = clear the start/stop bit for a button run, SetLevel just ahead of the estimated position otherwise |
-| Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (written with `turnOn`/`turnOff`) |
+| Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (writes the ONOFF bit both ways; the library's `turnOn` sends `SetLevel ff05`, which the relay ignores) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
 
 The rotating sensor packets are accumulated by the library in
