@@ -99,6 +99,16 @@ async def test_demo_creates_pergola_entities(hass: HomeAssistant) -> None:
     )
     assert hass.states.get(_entity_id(hass, "light", f"{DEMO_NETWORK_ID}-group-1"))
     assert hass.states.get(_entity_id(hass, "scene", f"{DEMO_NETWORK_ID}-scene-1"))
+    heating = _entity_id(hass, "switch", f"{DEMO_NETWORK_ID}-unit-demo-unit-6-relay")
+    assert hass.states.get(heating).state == "off"
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: heating}, blocking=True
+    )
+    assert hass.states.get(heating).state == "on"
+    await hass.services.async_call(
+        "switch", "turn_off", {ATTR_ENTITY_ID: heating}, blocking=True
+    )
+    assert hass.states.get(heating).state == "off"
     assert hass.states.get(
         _entity_id(hass, "switch", f"{DEMO_NETWORK_ID}-unit-demo-unit-1-sun-tracking")
     )

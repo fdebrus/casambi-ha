@@ -56,6 +56,7 @@ fork (whose enhanced `casambi-bt-skk` library this integration uses):
 |---|---|---|---|
 | Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), multiplexed sensors | Cover (blind) with position + stop |
 | Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35), onoff `$toggle` (bit 36), travel-time sensors | Cover (shade) with position + stop |
+| Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (written with `turnOn`/`turnOff`) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
 
 The rotating sensor packets are accumulated by the library in
@@ -78,8 +79,10 @@ nine-shutter installation, and confirmed here on a Winsol SO! Climate
 pergola with three SO! V4.1 screens: before the inversion, *open* extended
 the screen and *close* retracted it.
 
-The louvre slider (0–142°) is a different mechanism and has **not** been
-checked for direction yet.
+The louvre slider (0–142°) is **not** inverted: slider 0 is the louvres
+closed flat into a sealed roof, 142 fully open, matching the Home Assistant
+position straight through. Confirmed on the same pergola — with the roof
+physically closed the unit reports `slider: 0` and the cover shows closed.
 
 ### Real-world network layout
 
@@ -89,7 +92,8 @@ bits 28–35 + ONOFF bit 36), one `Winsol Lamel Standard V4.1 TA16`
 (`EXT/Elements`, 5-byte state, SLIDER bits 28–35 with max 142 + ONOFF bit
 36 — the layout this integration was built on, with no native automation
 controls), one `Winsol Mono` dimmer for the spots (`PWM/1ch/Dim`), one
-`Winsol On-Off` relay (`EXT/Elements`, a single ONOFF), one
+`Winsol On-Off` relay (`EXT/Elements`, a single ONOFF — it switches the
+pergola heating and is exposed as a `switch`), one
 `24VDC_4CH_PB_Winsol` push-button interface (mode `PushButton`, one
 read-only 8-bit UNKNOWN control — the source of the wall-switch events),
 and two `Repeater` units (mode `Sensor`, one UNKNOWN control). **No sensor

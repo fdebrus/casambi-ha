@@ -31,6 +31,7 @@ LIGHT_UUID = "unit-light-uuid"
 LOUVRE_UUID = "unit-louvre-uuid"
 WINSOL_LOUVRE_UUID = "unit-winsol-louvre-uuid"
 WINSOL_SCREEN_UUID = "unit-winsol-screen-uuid"
+WINSOL_RELAY_UUID = "unit-winsol-relay-uuid"
 SENSOR_PLATFORM_UUID = "unit-sensor-platform-uuid"
 
 
@@ -163,6 +164,30 @@ def make_winsol_screen_unit() -> Unit:
     return unit
 
 
+def make_winsol_relay_unit() -> Unit:
+    """Create a unit modeled on the Winsol On-Off relay.
+
+    Control layout from a real SO! Climate pergola: a 1-byte state with a
+    single writable ONOFF bit at offset 0, in EXT/Elements mode. It drives
+    the pergola heating.
+    """
+    state = UnitState()
+    state.onoff = False
+    unit = _make_unit(
+        10025,
+        11,
+        WINSOL_RELAY_UUID,
+        "On-Off",
+        [UnitControl(UnitControlType.ONOFF, 0, 1, 0, False)],
+        state,
+        mode="EXT/Elements",
+        model="Winsol On-Off",
+        state_length=1,
+    )
+    state._raw_state = bytes(1)  # noqa: SLF001
+    return unit
+
+
 def make_sensor_platform_unit() -> Unit:
     """Create a unit modeled on the LEDsGO Sensor Platform V4 fixture.
 
@@ -229,6 +254,7 @@ def mock_casambi() -> Generator[MagicMock]:
         louvre,
         make_winsol_louvre_unit(),
         make_winsol_screen_unit(),
+        make_winsol_relay_unit(),
         make_sensor_platform_unit(),
     ]
     casa.groups = [Group(1, "Pergola", [light, louvre])]
