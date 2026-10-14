@@ -63,6 +63,12 @@ Units are classified automatically by their control layout (`classify.py`) — m
 > of Home Assistant's cover position. The integration inverts this, so
 > **open** retracts the screen and **close** extends it. Confirmed on SO!
 > V4.1 hardware.
+>
+> **Screen stop.** The screen's own start/stop control reverses the motion
+> instead of stopping it, so **Stop** sends the position the screen has
+> reached, estimated from when it started moving and the travel time it
+> reports (35 s end to end). Expect it to settle within a few centimetres
+> of where you pressed.
 
 ## Demo mode
 
