@@ -18,6 +18,29 @@ from .const import DOMAIN
 
 _LOGGER: Final = logging.getLogger(__name__)
 
+# Newer cores link a device to its parent by registry id and deprecate the
+# identifier tuple (`via_device`, removed in 2027.8); older cores only know
+# the tuple. Both populate the same `via_device_id` on the device entry.
+_VIA_DEVICE_ID_SUPPORTED: Final = "via_device_id" in getattr(
+    DeviceInfo, "__optional_keys__", frozenset()
+)
+
+
+def unit_device_info(api: CasambiApi, unit: CasambiUnit) -> DeviceInfo:
+    """Return the device info of a unit, linked to the network device."""
+    info: dict[str, Any] = {
+        "name": unit.name,
+        "manufacturer": unit.unitType.manufacturer,
+        "model": unit.unitType.model,
+        "sw_version": unit.firmwareVersion,
+        "identifiers": {(DOMAIN, unit.uuid)},
+    }
+    if _VIA_DEVICE_ID_SUPPORTED and api.network_device_id is not None:
+        info["via_device_id"] = api.network_device_id
+    else:
+        info["via_device"] = (DOMAIN, api.casa.networkId)
+    return cast("DeviceInfo", info)
+
 
 @dataclass(kw_only=True)
 class TypedEntityDescription(EntityDescription):
@@ -187,15 +210,7 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
     @property
     def device_info(self) -> DeviceInfo:
         """Return specific device information."""
-        unit = cast("CasambiUnit", self._obj)
-        return DeviceInfo(
-            name=unit.name,
-            manufacturer=unit.unitType.manufacturer,
-            model=unit.unitType.model,
-            sw_version=unit.firmwareVersion,
-            identifiers={(DOMAIN, unit.uuid)},
-            via_device=(DOMAIN, self._api.casa.networkId),
-        )
+        return unit_device_info(self._api, cast("CasambiUnit", self._obj))
 
     @property
     def available(self) -> bool:

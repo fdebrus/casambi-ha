@@ -61,9 +61,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
     entry.runtime_data = api
 
     # Create the network device before the platforms so that unit devices
-    # can reference it via via_device.
+    # can link to it by id.
     device_registry = dr.async_get(hass)
-    device_registry.async_get_or_create(
+    network_device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, api.casa.networkId)},
         connections=(set() if api.demo else {(dr.CONNECTION_BLUETOOTH, api.address)}),
@@ -71,6 +71,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
         model="Demo network" if api.demo else "Network",
         name=api.casa.networkName,
     )
+    api.network_device_id = network_device.id
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -152,6 +153,9 @@ class CasambiApi:
         self.temp_control: dict[str, bool] = {}
         self.temp_setpoints: dict[str, float] = {}
         self.rain_active = False
+        # Registry id of the network device, set once it has been created so
+        # that unit devices can be linked to it.
+        self.network_device_id: str | None = None
         self._cancel_bluetooth_callback: Callable[[], None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
         self._handlers_registered = False

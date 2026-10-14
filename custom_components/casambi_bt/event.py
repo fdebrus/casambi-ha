@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
 from .const import DOMAIN
+from .entities import unit_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,14 +110,7 @@ class CasambiButtonEventEntity(EventEntity):
         """Return the device of the switch unit if known, else the network."""
         for unit in self._api.get_units():
             if unit.deviceId == self._unit_id:
-                return DeviceInfo(
-                    name=unit.name,
-                    manufacturer=unit.unitType.manufacturer,
-                    model=unit.unitType.model,
-                    sw_version=unit.firmwareVersion,
-                    identifiers={(DOMAIN, unit.uuid)},
-                    via_device=(DOMAIN, self._api.casa.networkId),
-                )
+                return unit_device_info(self._api, unit)
         return DeviceInfo(
             name=self._api.casa.networkName,
             manufacturer="Casambi",

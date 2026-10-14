@@ -10,7 +10,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.casambi_bt.const import DOMAIN
-from custom_components.casambi_bt.suntrack import compute_louvre_angle
+from custom_components.casambi_bt.suntrack import compute_louvre_angle, get_sun_position
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -51,6 +51,28 @@ def test_compute_louvre_angle(
     else:
         assert result is not None
         assert result == pytest.approx(expected, abs=0.1)
+
+
+async def test_get_sun_position(
+    hass: HomeAssistant, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Test the solar position at a known time and place, with no deprecations."""
+    # Brussels at solar noon on the summer solstice: the sun is due south,
+    # about 62 degrees above the horizon.
+    hass.config.latitude = 50.85
+    hass.config.longitude = 4.35
+    hass.config.elevation = 0
+    noon = dt_util.parse_datetime("2026-06-21T11:43:00+00:00")
+    assert noon is not None
+
+    with patch(
+        "custom_components.casambi_bt.suntrack.dt_util.utcnow", return_value=noon
+    ):
+        elevation, azimuth = get_sun_position(hass)
+
+    assert elevation == pytest.approx(62.6, abs=0.5)
+    assert azimuth == pytest.approx(180.0, abs=1.0)
+    assert "deprecated" not in caplog.text
 
 
 async def test_sun_tracking_switch(

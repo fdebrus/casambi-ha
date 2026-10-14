@@ -202,6 +202,26 @@ black . --check
 
 For `casambi-bt` also run `mypy .`. All of these tools should be available when following the recommended setup procedure.
 
+### Supporting several Home Assistant versions
+
+The test requirements pin the oldest supported core (2026.2). Two helpers
+changed in newer cores and the integration adapts at import time rather than
+raising the minimum version:
+
+- `homeassistant.helpers.sun.get_astral_observer` replaces
+  `get_astral_location` (removed in 2027.7) — `suntrack.py` uses whichever
+  exists.
+- Devices link to their parent with `via_device_id` instead of the
+  `via_device` identifier tuple (removed in 2027.8) — `entities.py` passes the
+  network device's registry id, recorded on `CasambiApi.network_device_id`
+  when the device is created in `async_setup_entry`, on cores whose
+  `DeviceInfo` accepts it.
+
+To run the suite against the newest core as well, create a second venv with
+Python 3.14, install the latest `pytest-homeassistant-custom-component`, and
+add the requirements listed in the `bluetooth`, `bluetooth_adapters` and `usb`
+component manifests of that core (the harness does not install them).
+
 ## Development setup
 
 The development setup has the following goals:
