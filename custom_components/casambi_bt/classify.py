@@ -36,6 +36,7 @@ class UnitKind(Enum):
     LIGHT = auto()
     LOUVRE = auto()
     SCREEN = auto()
+    RELAY = auto()
     SENSOR_PLATFORM = auto()
     OTHER = auto()
 
@@ -48,6 +49,10 @@ def classify_unit(unit: Unit) -> UnitKind:
       (e.g. Winsol Lamel louvres: slider $pos 0-142° + onoff $startstop).
     - EXT/1ch/Dim with only a dimmer is a motor-driven screen/blind whose
       position is reported as the dimmer value (e.g. Winsol SO!).
+    - An EXT/ unit whose only control is a writable ONOFF bit is a relay
+      switching some external load (e.g. the Winsol On-Off driving the
+      pergola heating). Ordinary on/off luminaires are not in EXT/ mode
+      and stay lights.
     - Units that report sensor readings and drive nothing are sensor
       platforms (e.g. Sensor Platform V4: presence, lux, wind, sun, rain).
       This is decided on the control types alone because the mode string
@@ -69,6 +74,13 @@ def classify_unit(unit: Unit) -> UnitKind:
 
     if mode.startswith("EXT/1ch/Dim") and UnitControlType.DIMMER in ctypes:
         return UnitKind.SCREEN
+
+    if (
+        mode.startswith("EXT/")
+        and ctypes == {UnitControlType.ONOFF}
+        and not all(c.readonly for c in unit.unitType.controls)
+    ):
+        return UnitKind.RELAY
 
     # Detected by control types rather than by the mode string: the mode
     # naming varies between installations, but a unit that reports sensor

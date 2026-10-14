@@ -44,7 +44,7 @@ All later settings live behind the integration's **Configure** button:
 
 ## What gets created
 
-Units are classified automatically by their control layout (`classify.py`) — motors become covers, never lights:
+Units are classified automatically by their control layout (`classify.py`) — motors become covers and bare on/off relays become switches, never lights:
 
 | Hardware | Entities |
 |---|---|
@@ -52,6 +52,7 @@ Units are classified automatically by their control layout (`classify.py`) — m
 | Casambi scenes | `scene` entities |
 | **Winsol louvre motor** (Lamel) | `cover` (blind) with position 0–100% (= 0–142°) and **Stop**, plus the automation entities below |
 | **Winsol SO! screen** | `cover` (shade) with position and Stop |
+| **Winsol On-Off relay** (e.g. the pergola heating) | `switch` |
 | **Sensor Platform V4** (weather option) | `sensor`: wind speed (km/h), solar radiation, illuminance (lx); `binary_sensor`: rain, motion, presence; `switch`: per-element enables (wind/rain/light/motion) |
 | Wall switches / remotes (e.g. Xpress) | `event` entities per button (created on first press) + bus events |
 | Network | `binary_sensor` connectivity status |
@@ -67,7 +68,7 @@ Units are classified automatically by their control layout (`classify.py`) — m
 
 Demo mode simulates a complete pergola so the integration can be tried **without any hardware, Bluetooth adapter or Casambi network** — useful for building dashboards and testing automations before the pergola is installed.
 
-Add the integration and pick **Demo (no hardware needed)**. It creates a network with a louvre motor, a screen, a weather sensor platform, two lights, a light group and two scenes, built from the real Winsol fixture definitions. Covers move, lights dim and the sun tracking, temperature control and weather protection all work exactly as they do on real hardware.
+Add the integration and pick **Demo (no hardware needed)**. It creates a network with a louvre motor, a screen, a weather sensor platform, two lights, a heating relay, a light group and two scenes, built from the real Winsol fixture definitions. Covers move, lights dim and the sun tracking, temperature control and weather protection all work exactly as they do on real hardware.
 
 Three extra config entities drive the simulation, so the automations can be tested deterministically:
 

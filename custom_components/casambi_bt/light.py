@@ -15,16 +15,18 @@ from homeassistant.components.light import (
     ATTR_RGB_COLOR,
     ATTR_RGBW_COLOR,
     ATTR_XY_COLOR,
+    DOMAIN as LIGHT_DOMAIN,
     ColorMode,
     LightEntity,
     LightEntityFeature,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
-from .const import CONF_IMPORT_GROUPS, entry_option
+from .const import CONF_IMPORT_GROUPS, DOMAIN, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -55,12 +57,24 @@ async def async_setup_entry(
     casa_api = config_entry.runtime_data
 
     # Units like louvre or screen motors carry dimmer/onoff controls but are
-    # covers, not lights.
-    light_entities: list[CasambiLight] = [
-        CasambiLightUnit(casa_api, u)
-        for u in casa_api.get_units(CASA_LIGHT_CTRL_TYPES)
-        if classify_unit(u) is UnitKind.LIGHT
-    ]
+    # covers, not lights, and on/off relays are switches.
+    light_entities: list[CasambiLight] = []
+    registry = er.async_get(hass)
+    for unit in casa_api.get_units(CASA_LIGHT_CTRL_TYPES):
+        kind = classify_unit(unit)
+        if kind is UnitKind.LIGHT:
+            light_entities.append(CasambiLightUnit(casa_api, unit))
+        elif kind is UnitKind.RELAY:
+            # Relays used to be exposed as on/off lights; drop the stale
+            # registry entry so only the switch remains.
+            stale = registry.async_get_entity_id(
+                LIGHT_DOMAIN,
+                DOMAIN,
+                f"{casa_api.casa.networkId}-unit-{unit.uuid}-light",
+            )
+            if stale is not None:
+                _LOGGER.info("Removing %s, the relay is now a switch", stale)
+                registry.async_remove(stale)
 
     group_entities: list[CasambiLight] = []
     if entry_option(config_entry, CONF_IMPORT_GROUPS, True):

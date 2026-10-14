@@ -1,5 +1,7 @@
-"""Automation switches for Casambi louvre covers and screens.
+"""Switches for Casambi relays and the pergola automations.
 
+- Relay: a unit whose only control is an on/off bit (e.g. the Winsol
+  On-Off driving the heating) is exposed as a plain switch.
 - Sun tracking: keeps the louvre slats perpendicular to the sun.
 - Temperature control: biases the sun tracking toward more shade when the
   terrace is warmer than the setpoint and toward more sun when colder.
@@ -16,7 +18,7 @@ from typing import Any, Final, cast
 
 from CasambiBt import Unit, UnitControl, UnitControlType
 
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory, EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -94,7 +96,7 @@ async def async_setup_entry(
     config_entry: CasambiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create automation switches for louvres and the weather."""
+    """Create the relay switches and the automation switches."""
     casa_api = config_entry.runtime_data
 
     entities: list[SwitchEntity] = []
@@ -104,7 +106,9 @@ async def async_setup_entry(
 
     for unit in casa_api.get_units():
         kind = classify_unit(unit)
-        if kind is UnitKind.LOUVRE:
+        if kind is UnitKind.RELAY:
+            entities.append(CasambiRelaySwitch(casa_api, unit))
+        elif kind is UnitKind.LOUVRE:
             louvres.append(unit)
         elif kind is UnitKind.SCREEN:
             screens.append(unit)
@@ -144,6 +148,36 @@ async def async_setup_entry(
         )
 
     async_add_entities(entities)
+
+
+class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
+    """A Casambi unit that only switches an external load on and off.
+
+    E.g. the Winsol On-Off relay of a SO! Climate pergola, which drives
+    the heating. It carries a single writable ONOFF bit and no dimmer, so
+    it is a switch rather than a light.
+    """
+
+    _attr_device_class = SwitchDeviceClass.SWITCH
+
+    def __init__(self, api: CasambiApi, unit: Unit) -> None:
+        """Initialize a relay switch."""
+        desc = TypedEntityDescription(key=unit.uuid, name=None, entity_type="relay")
+        self._obj: Unit
+        super().__init__(api, desc, unit)
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the relay is on."""
+        return self._obj.is_on
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Close the relay."""
+        await self._async_casa_command(self._api.casa.turnOn(self._obj))
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Open the relay."""
+        await self._async_casa_command(self._api.casa.turnOff(self._obj))
 
 
 class CasambiSunTrackingSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):

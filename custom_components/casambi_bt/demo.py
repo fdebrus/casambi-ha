@@ -2,7 +2,7 @@
 
 Demo mode lets the integration be set up without any hardware: it builds
 the units of a typical Winsol pergola (louvre motor, screen, sensor
-platform, lights) from their real fixture definitions and answers
+platform, lights, heating relay) from their real fixture definitions and answers
 commands locally, so covers move, lights dim and the automations can be
 tried out before the hardware exists.
 
@@ -156,6 +156,24 @@ def _make_sensor_platform() -> Unit:
     return unit
 
 
+def _make_relay(device_id: int, name: str) -> Unit:
+    """Build a Winsol On-Off relay (a single writable on/off bit)."""
+    state = UnitState()
+    state.onoff = False
+    unit = _unit(
+        10025,
+        device_id,
+        name,
+        "Winsol On-Off",
+        "EXT/Elements",
+        [UnitControl(UnitControlType.ONOFF, 0, 1, 0, False)],
+        state,
+        state_length=1,
+    )
+    state._raw_state = bytes(1)  # noqa: SLF001
+    return unit
+
+
 def _make_light(device_id: int, name: str) -> Unit:
     """Build a dimmable, tunable white light."""
     state = UnitState()
@@ -193,8 +211,15 @@ class DemoCasambi:
         self._screen = _make_screen()
         self._sensors = _make_sensor_platform()
         lights = [_make_light(4, "Pergola spots"), _make_light(5, "Terrace strip")]
+        relay = _make_relay(6, "Pergola heating")
 
-        self.units: list[Unit] = [self._louvre, self._screen, self._sensors, *lights]
+        self.units: list[Unit] = [
+            self._louvre,
+            self._screen,
+            self._sensors,
+            *lights,
+            relay,
+        ]
         self.groups: list[Group] = [Group(1, "Pergola lights", lights)]
         self.scenes: list[Scene] = [Scene(1, "Evening"), Scene(2, "Dinner")]
 
@@ -320,7 +345,17 @@ class DemoCasambi:
                 setattr(state, name, value)
             if "dimmer" in values and values["dimmer"] is not None:
                 unit._on = values["dimmer"] > 0  # noqa: SLF001
+            elif "onoff" in values and values["onoff"] is not None:
+                unit._on = bool(values["onoff"])  # noqa: SLF001
             self._notify(unit)
+
+    def _switch(self, target: Unit | Group | None, on: bool) -> None:
+        """Turn units on or off through the control they actually have."""
+        for unit in self._target_units(target):
+            if unit.unitType.get_control(UnitControlType.DIMMER) is not None:
+                self._apply(unit, dimmer=255 if on else 0)
+            else:
+                self._apply(unit, onoff=on)
 
     async def setLevel(self, target: Unit | Group | None, level: int) -> None:
         """Set the brightness of the target."""
@@ -375,11 +410,11 @@ class DemoCasambi:
 
     async def turnOn(self, target: Unit | Group | None) -> None:
         """Turn the target on."""
-        self._apply(target, dimmer=255)
+        self._switch(target, True)
 
     async def turnOff(self, target: Unit | Group | None) -> None:
         """Turn the target off."""
-        self._apply(target, dimmer=0)
+        self._switch(target, False)
 
     async def switchToScene(self, target: Scene, level: int = 0xFF) -> None:
         """Activate a scene."""
