@@ -26,9 +26,12 @@ CONF_TEMPERATURE_ENTITY: Final = "temperature_entity"
 CONF_WIND_THRESHOLD: Final = "wind_threshold"
 CONF_RAIN_ENTITY: Final = "rain_entity"
 CONF_WIND_ENTITY: Final = "wind_entity"
+CONF_FROST_LOCK_TEMPERATURE: Final = "frost_lock_temperature"
 
 DEFAULT_LOUVRE_AZIMUTH: Final = 180
 DEFAULT_WIND_THRESHOLD: Final = 35
+# Below this temperature (°C) the louvres may be frozen to their seals.
+DEFAULT_FROST_LOCK_TEMPERATURE: Final = 2.0
 
 EVENT_BUTTON: Final = f"{DOMAIN}_button_event"
 

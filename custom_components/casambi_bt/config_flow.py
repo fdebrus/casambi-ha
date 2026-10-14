@@ -27,6 +27,7 @@ from homeassistant.helpers.httpx_client import get_async_client
 from . import get_cache_dir
 from .const import (
     CONF_DEMO,
+    CONF_FROST_LOCK_TEMPERATURE,
     CONF_IMPORT_GROUPS,
     CONF_LOUVRE_AZIMUTH,
     CONF_RAIN_ENTITY,
@@ -34,6 +35,7 @@ from .const import (
     CONF_VERTICAL_AS_COVER,
     CONF_WIND_ENTITY,
     CONF_WIND_THRESHOLD,
+    DEFAULT_FROST_LOCK_TEMPERATURE,
     DEFAULT_LOUVRE_AZIMUTH,
     DEFAULT_WIND_THRESHOLD,
     DOMAIN,
@@ -121,6 +123,14 @@ class OptionsFlow(config_entries.OptionsFlow):
                         self._entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+                vol.Required(
+                    CONF_FROST_LOCK_TEMPERATURE,
+                    default=entry_option(
+                        self._entry,
+                        CONF_FROST_LOCK_TEMPERATURE,
+                        DEFAULT_FROST_LOCK_TEMPERATURE,
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
                 vol.Optional(
                     CONF_TEMPERATURE_ENTITY,
                     description={

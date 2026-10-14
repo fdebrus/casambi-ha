@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable
+import contextlib
 import inspect
 import logging
 from pathlib import Path
@@ -35,6 +36,9 @@ from . import switch_decoder
 from .classify import UnitKind, classify_unit
 from .const import (
     CONF_DEMO,
+    CONF_FROST_LOCK_TEMPERATURE,
+    CONF_TEMPERATURE_ENTITY,
+    DEFAULT_FROST_LOCK_TEMPERATURE,
     DOMAIN,
     EVENT_BUTTON,
     PLATFORMS,
@@ -42,6 +46,7 @@ from .const import (
     RECONNECT_BACKOFF_NO_DEVICE,
     RECONNECT_BACKOFF_START,
     RECONNECT_BACKOFF_STEP,
+    entry_option,
 )
 from .demo import DemoCasambi
 
@@ -204,6 +209,8 @@ class CasambiApi:
         self.temp_setpoints: dict[str, float] = {}
         self.rain_active = False
         self.wind_active = False
+        self.frost_lock: dict[str, bool] = {}
+        self._last_temperature: float | None = None
         # Registry id of the network device, set once it has been created so
         # that unit devices can be linked to it.
         self.network_device_id: str | None = None
@@ -366,6 +373,34 @@ class CasambiApi:
     def available(self) -> bool:
         """Return True if the controller is available."""
         return self._casa.connected
+
+    def frost_lock_temperature(self, unit: Unit) -> float | None:
+        """Return the temperature that locks a louvre against frost, or None.
+
+        The louvres are locked while their frost lock is on and the
+        temperature source reads below the configured threshold. When the
+        source can't tell (unavailable, not numeric), its last reading
+        counts, so a dropped weather station doesn't unlock them.
+        """
+        if not self.frost_lock.get(unit.uuid, True):
+            return None
+        entity_id = entry_option(self.conf_entry, CONF_TEMPERATURE_ENTITY, None)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is not None:
+            with contextlib.suppress(ValueError):
+                self._last_temperature = float(state.state)
+        if self._last_temperature is None:
+            return None
+        threshold = entry_option(
+            self.conf_entry,
+            CONF_FROST_LOCK_TEMPERATURE,
+            DEFAULT_FROST_LOCK_TEMPERATURE,
+        )
+        if self._last_temperature < threshold:
+            return self._last_temperature
+        return None
 
     def get_units(
         self, control_types: list[UnitControlType] | None = None

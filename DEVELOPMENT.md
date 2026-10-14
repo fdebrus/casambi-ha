@@ -303,6 +303,15 @@ and the wind entity (`entity_wind_kmh`, converted from its unit with
 `SpeedConverter`; no unit means km/h). The switch is also created when
 only a wind entity is set.
 
+**Frost lock**: a per-louvre config switch (on by default, restored).
+`CasambiApi.frost_lock_temperature(unit)` returns the reading while the
+lock is on and the temperature entity reads below
+`frost_lock_temperature` (default 2 °C), keeping the last numeric reading
+when the entity can't tell. The louvre cover then raises
+`ServiceValidationError` (`frost_lock`) on open and on any position above
+the current one, and sun tracking skips its update; closing, stopping and
+weather protection are not affected.
+
 ## Demo mode
 
 `demo.py` contains `DemoCasambi`, a local stand-in that implements the parts

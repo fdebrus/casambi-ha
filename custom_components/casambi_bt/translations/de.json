@@ -58,9 +58,10 @@
                     "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)",
                     "louvre_azimuth": "Ausrichtung der Pergola (Azimut in Grad, 180 = Süden)",
                     "wind_threshold": "Windgrenze zum Einfahren der Screens und Schließen der Lamellen (km/h)",
-                    "temperature_entity": "Temperatursensor für die Temperaturregelung",
+                    "temperature_entity": "Temperatursensor für die Temperaturregelung und die Frostsperre",
                     "rain_entity": "Regensensor für den Wetterschutz (Binärsensor, Niederschlagssensor oder Wetter-Entität)",
-                    "wind_entity": "Windgeschwindigkeitssensor für den Wetterschutz"
+                    "wind_entity": "Windgeschwindigkeitssensor für den Wetterschutz",
+                    "frost_lock_temperature": "Frostsperre: Lamellen unter dieser Temperatur nicht öffnen (°C)"
                 },
                 "title": "Casambi Optionen"
             }
@@ -133,6 +134,9 @@
             "demo_rain": {
                 "name": "Regen simulieren"
             },
+            "frost_lock": {
+                "name": "Frostsperre"
+            },
             "light_sensor_enabled": {
                 "name": "Lichtsensor aktiviert"
             },
@@ -159,6 +163,9 @@
     "exceptions": {
         "command_error": {
             "message": "Der Befehl konnte nicht an das Casambi Netzwerk gesendet werden."
+        },
+        "frost_lock": {
+            "message": "Die Lamellen sind gegen Frost gesperrt: Es hat {temperature} °C, sie könnten an den Dichtungen festgefroren sein. Schließen oder Anhalten ist weiterhin möglich, oder schalte die Frostsperre aus."
         }
     },
     "issues": {

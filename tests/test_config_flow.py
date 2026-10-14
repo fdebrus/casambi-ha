@@ -7,6 +7,7 @@ import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.casambi_bt.const import (
+    CONF_FROST_LOCK_TEMPERATURE,
     CONF_IMPORT_GROUPS,
     CONF_LOUVRE_AZIMUTH,
     CONF_VERTICAL_AS_COVER,
@@ -146,6 +147,7 @@ async def test_options_flow(
         CONF_VERTICAL_AS_COVER: True,
         CONF_LOUVRE_AZIMUTH: 180,
         CONF_WIND_THRESHOLD: 35,
+        CONF_FROST_LOCK_TEMPERATURE: 2.0,
     }
 
 
