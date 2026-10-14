@@ -23,6 +23,7 @@ from homeassistant.const import (
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
+    STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -218,6 +219,51 @@ async def test_louvre_cover(
     assert isinstance(control, UnitControl)
     assert control.offset == 36
     assert value == 1
+
+
+async def test_louvre_channel_sensors(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the raw multiplexed sensor channels of the louvre motor."""
+    await _setup(hass, mock_config_entry)
+
+    prefix = f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}"
+    registry = er.async_get(hass)
+    channel_ids = [
+        _entity_id(hass, "sensor", f"{prefix}-channel-{n}") for n in range(1, 5)
+    ]
+    assert registry.async_get_entity_id("sensor", DOMAIN, f"{prefix}-channel-5") is None
+    entry = registry.async_get(channel_ids[0])
+    assert entry is not None
+    assert entry.entity_category is er.EntityCategory.DIAGNOSTIC
+
+    # The all-zero initial state carries channel 0, which is nobody's.
+    for entity_id in channel_ids:
+        assert hass.states.get(entity_id).state == STATE_UNKNOWN
+
+    # Packets captured on a Winsol Lamel Standard: channel 1 = 30 while
+    # the slider reads 109, then channel 3 = 20.
+    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+    for packet in ("e10100d006", "430100d006"):
+        louvre.state._raw_state = bytes.fromhex(packet)  # noqa: SLF001
+        handler(louvre)
+        await hass.async_block_till_done()
+
+    assert hass.states.get(channel_ids[0]).state == "30"
+    assert hass.states.get(channel_ids[1]).state == STATE_UNKNOWN
+    assert hass.states.get(channel_ids[2]).state == "20"
+    assert hass.states.get(channel_ids[3]).state == STATE_UNKNOWN
+
+    # Screens multiplex travel times the same way but get no channel sensors.
+    screen_prefix = f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}"
+    assert (
+        registry.async_get_entity_id("sensor", DOMAIN, f"{screen_prefix}-channel-1")
+        is None
+    )
 
 
 async def test_screen_cover(

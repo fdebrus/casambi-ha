@@ -27,7 +27,9 @@ from CasambiBt import (
     UnitState,
     UnitType,
 )
-from CasambiBt._switch import SwitchEvent
+import CasambiBt._client as casambi_client
+from CasambiBt._invocation import parse_invocation_stream
+from CasambiBt._switch import ButtonEventType, SwitchEvent, SwitchEventDecoder
 import CasambiBt.errors as casambi_errors
 import pytest
 
@@ -206,6 +208,39 @@ def test_switch_event_fields(name: str) -> None:
     entities without any test noticing.
     """
     assert _has_member(SwitchEvent, name), f"SwitchEvent.{name} is gone"
+
+
+def test_switch_decoder_internals() -> None:
+    """Test the private decoder pieces the input-stream decoder builds on.
+
+    switch_decoder.py subclasses the library decoder and swaps it into the
+    client module; if any of these move, wall buttons on wired interfaces
+    go silent again.
+    """
+    assert hasattr(casambi_client, "SwitchEventDecoder")
+    assert inspect.signature(SwitchEventDecoder.decode).parameters.keys() >= {
+        "data",
+        "packet_seq",
+    }
+    decoder = SwitchEventDecoder()
+    assert isinstance(decoder._seen_origins, dict)  # noqa: SLF001
+    assert callable(decoder._is_retransmit)  # noqa: SLF001
+
+    (frame,) = parse_invocation_stream(bytes.fromhex("10024004b4041200030100"))
+    assert (frame.opcode, frame.origin, frame.target) == (0x40, 0x04B4, 0x0412)
+    assert frame.payload == b"\x01\x00"
+    assert {e.name for e in ButtonEventType} >= {
+        "PRESS",
+        "RELEASE",
+        "HOLD",
+        "RELEASE_AFTER_HOLD",
+    }
+    assert {f.name for f in fields(SwitchEvent)} >= {
+        "button_event_index",
+        "target_type",
+        "flags",
+        "extra_data",
+    }
 
 
 @pytest.mark.parametrize(

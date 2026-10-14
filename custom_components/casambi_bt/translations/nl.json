@@ -95,6 +95,9 @@
             "illuminance": {
                 "name": "Lichtsterkte"
             },
+            "louvre_channel": {
+                "name": "Sensorkanaal {channel}"
+            },
             "solar": {
                 "name": "Zonnestraling"
             },

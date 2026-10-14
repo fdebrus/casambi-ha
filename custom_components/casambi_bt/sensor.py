@@ -12,6 +12,11 @@ https://github.com/superkikim/casambi-bt-hass fork:
 
 Additionally the platform reports lux (12 bit) and presence (2 bit) as
 first-class controls parsed into the unit state.
+
+Winsol louvre motors multiplex a few sensor channels of their own into
+their 5-byte state (bits 0-3 select the channel, bits 4-27 carry its
+24-bit value). Their meaning is not decoded yet, so they are exposed as
+raw diagnostic sensors to be identified on real hardware.
 """
 
 from __future__ import annotations
@@ -27,13 +32,17 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import LIGHT_LUX, UnitOfSpeed
-from homeassistant.core import HomeAssistant
+from homeassistant.const import LIGHT_LUX, EntityCategory, UnitOfSpeed
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
-from .entities import CasambiBroadcastUnitEntity, TypedEntityDescription
+from .entities import (
+    CasambiBroadcastUnitEntity,
+    CasambiUnitEntity,
+    TypedEntityDescription,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,6 +51,20 @@ PARALLEL_UPDATES = 0
 
 PACKET_WIND: Final = 1
 PACKET_SOLAR: Final = 2
+
+# Louvre state layout: a 4-bit channel header followed by a 24-bit value.
+LOUVRE_HEADER_BITS: Final = 4
+LOUVRE_VALUE_BITS: Final = 24
+
+
+def decode_louvre_channel(raw: bytes | None) -> tuple[int, int] | None:
+    """Return the (channel, value) multiplexed into a louvre state."""
+    if raw is None or len(raw) * 8 < LOUVRE_HEADER_BITS + LOUVRE_VALUE_BITS:
+        return None
+    packed = int.from_bytes(raw, "little")
+    channel = packed & ((1 << LOUVRE_HEADER_BITS) - 1)
+    value = (packed >> LOUVRE_HEADER_BITS) & ((1 << LOUVRE_VALUE_BITS) - 1)
+    return channel, value
 
 
 class TypedSensorEntityDescription(TypedEntityDescription, SensorEntityDescription):
@@ -58,15 +81,69 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
     for unit in casa_api.get_units():
-        if classify_unit(unit) is not UnitKind.SENSOR_PLATFORM:
-            continue
-        _LOGGER.debug("Creating environment sensors for unit %s", unit.name)
-        entities.append(CasambiWindSensor(casa_api, unit))
-        entities.append(CasambiSolarSensor(casa_api, unit))
-        if unit.unitType.get_control(UnitControlType.LUX) is not None:
-            entities.append(CasambiLuxSensor(casa_api, unit))
+        kind = classify_unit(unit)
+        if kind is UnitKind.SENSOR_PLATFORM:
+            _LOGGER.debug("Creating environment sensors for unit %s", unit.name)
+            entities.append(CasambiWindSensor(casa_api, unit))
+            entities.append(CasambiSolarSensor(casa_api, unit))
+            if unit.unitType.get_control(UnitControlType.LUX) is not None:
+                entities.append(CasambiLuxSensor(casa_api, unit))
+        elif kind is UnitKind.LOUVRE:
+            # One raw channel per SENSOR control the motor declares; the
+            # channel headers on the wire count from 1.
+            channels = sum(
+                1 for c in unit.unitType.controls if c.type == UnitControlType.SENSOR
+            )
+            entities.extend(
+                CasambiLouvreChannelSensor(casa_api, unit, channel)
+                for channel in range(1, channels + 1)
+            )
 
     async_add_entities(entities)
+
+
+class CasambiLouvreChannelSensor(CasambiUnitEntity, SensorEntity):
+    """One raw multiplexed sensor channel of a louvre motor.
+
+    The motor rotates through its channels every few seconds; this entity
+    keeps the last value seen for its own channel and ignores the others.
+    """
+
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:numeric"
+
+    def __init__(self, api: CasambiApi, unit: Unit, channel: int) -> None:
+        """Initialize a raw channel sensor."""
+        desc = TypedSensorEntityDescription(
+            key=unit.uuid,
+            entity_type=f"channel-{channel}",
+            translation_key="louvre_channel",
+        )
+        self._obj: Unit
+        super().__init__(api, desc, unit)
+        self._channel = channel
+        self._attr_translation_placeholders = {"channel": str(channel)}
+        self._value: int | None = None
+        self._decode()
+
+    def _decode(self) -> None:
+        """Pick up the value if the current state carries this channel."""
+        state = self._obj.state
+        decoded = decode_louvre_channel(state.raw_state if state else None)
+        if decoded is not None and decoded[0] == self._channel:
+            self._value = decoded[1]
+
+    @callback
+    def _change_callback(self, unit: Unit) -> None:
+        super()._change_callback(unit)
+        self._decode()
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the last value seen on this channel."""
+        return self._value
 
 
 class CasambiPacketSensor(CasambiBroadcastUnitEntity, SensorEntity):

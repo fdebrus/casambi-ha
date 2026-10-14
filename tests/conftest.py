@@ -123,9 +123,9 @@ def make_louvre_unit() -> Unit:
 def make_winsol_louvre_unit() -> Unit:
     """Create a unit modeled on the Winsol Lamel Standard V4.1 fixture.
 
-    Control layout from the real fixture definition: multiplexed sensors
-    (bits 0-27), slider $pos (bits 28-35, 0-142 degrees), and onoff
-    $startstop (bit 36).
+    Control layout from the real fixture definition: a 4-bit channel header
+    and four multiplexed sensors sharing the 24-bit value (bits 0-27),
+    slider $pos (bits 28-35, 0-142 degrees), and onoff $startstop (bit 36).
     """
     state = UnitState()
     state.slider = 128
@@ -136,7 +136,10 @@ def make_winsol_louvre_unit() -> Unit:
         "Pergola Louvres",
         [
             UnitControl(UnitControlType.UNKNOWN, 0, 4, 0, True),
-            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 255),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 0),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 0),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 255),
             UnitControl(UnitControlType.UNKNOWN, 4, 24, 0, True),
             UnitControl(UnitControlType.SLIDER, 28, 8, 255, False, 0, 142),
             UnitControl(UnitControlType.ONOFF, 36, 1, 0, False),

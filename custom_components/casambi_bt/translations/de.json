@@ -102,6 +102,9 @@
             "illuminance": {
                 "name": "Helligkeit"
             },
+            "louvre_channel": {
+                "name": "Sensorkanal {channel}"
+            },
             "solar": {
                 "name": "Sonneneinstrahlung"
             },

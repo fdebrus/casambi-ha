@@ -93,7 +93,10 @@ def _make_louvre() -> Unit:
         "EXT/Elements",
         [
             UnitControl(UnitControlType.UNKNOWN, 0, 4, 0, True),
-            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 255),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 0),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 0),
+            UnitControl(UnitControlType.SENSOR, 4, 0, 0, True, 0, 255),
             UnitControl(UnitControlType.UNKNOWN, 4, 24, 0, True),
             UnitControl(UnitControlType.SLIDER, 28, 8, 255, False, 0, 142),
             UnitControl(UnitControlType.ONOFF, 36, 1, 0, False),

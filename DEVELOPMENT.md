@@ -54,7 +54,7 @@ fork (whose enhanced `casambi-bt-skk` library this integration uses):
 
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
-| Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), multiplexed sensors | Cover (blind) with position + stop |
+| Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27) | Cover (blind) with position + stop, plus one raw diagnostic sensor per channel |
 | Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35), onoff `$toggle` (bit 36), travel-time sensors | Cover (shade) with position + stop |
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (written with `turnOn`/`turnOff`) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
@@ -95,12 +95,47 @@ controls), one `Winsol Mono` dimmer for the spots (`PWM/1ch/Dim`), one
 `Winsol On-Off` relay (`EXT/Elements`, a single ONOFF — it switches the
 pergola heating and is exposed as a `switch`), one
 `24VDC_4CH_PB_Winsol` push-button interface (mode `PushButton`, one
-read-only 8-bit UNKNOWN control — the source of the wall-switch events),
+read-only 8-bit UNKNOWN control — the source of the wall-switch events, see
+below),
 and two `Repeater` units (mode `Sensor`, one UNKNOWN control). **No sensor
 platform was present**, so the weather entities and the weather
 protection switch do not appear on such a network; whether the pack's rain
 sensor is wired directly to the motor rather than onto the mesh is an open
 question for the installer.
+
+The Lamel itself declares four SENSOR controls and cycles through four
+channels in its state every ~4 s. Observed on that network: channel 1 rose
+from 17 to 30 over a sunny day (temperature-like), channels 2, 3 and 4 held
+0, 15 and 50. Each channel is exposed as a raw diagnostic sensor on the
+louvre device so they can be identified (e.g. by wetting the rain sensor
+and watching which channel reacts) before any semantics are attached.
+
+### Wired push buttons report on the input stream only
+
+Switch events arrive as type-7 packets holding INVOCATION frames (flags u16,
+opcode u8, origin u16, target u16, age u16, payload). EnOcean switches send
+each action twice in one packet: on the 0x06 button stream (opcode 29–36)
+and on the 0x12 input stream (opcode 64–71, payload[0] = 0x01 press,
+0x02 release, 0x09 hold, 0x0C release after hold). The library therefore
+ignores 0x12 presses and releases and takes them from 0x06.
+
+The `24VDC_4CH_PB_Winsol` never uses 0x06, so every short press was lost.
+Captured on unit 4 (button index = opcode − 0x40, payload[1] repeats it;
+`age` grows on retransmits of the same `origin`):
+
+```text
+1002 40 04b4 0412 0003 0100   button 1 press
+1002 40 04b4 0412 0006 0100   retransmit
+1002 40 04b6 0412 0004 0200   button 1 release
+1002 43 04cc 0412 0002 0103   button 4 press
+```
+
+`switch_decoder.py` subclasses the library decoder and swaps it into
+`CasambiBt._client` at import: 0x12 presses and releases are accepted from
+units that have never been seen on 0x06, and units that use 0x06 keep the
+library behaviour. Pressing the buttons did not move any motor, so on this
+pack they are free for Home Assistant automations. The override can go once
+the library handles input-only units itself.
 
 ### Winsol Lamel Intelligent (Star) — decoded, not implemented
 

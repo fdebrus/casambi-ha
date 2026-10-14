@@ -100,6 +100,9 @@
       "illuminance": {
         "name": "Illuminance"
       },
+      "louvre_channel": {
+        "name": "Sensor channel {channel}"
+      },
       "solar": {
         "name": "Solar radiation"
       },
