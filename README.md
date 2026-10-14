@@ -20,7 +20,7 @@ The documentation below describes what this fork does, for my own reference.
 
 ## Requirements
 
-- Home Assistant **2026.2 or newer** (the underlying library needs bleak ≥ 2.1)
+- Home Assistant **2026.6 or newer** (the underlying `casambi-bt` library needs bleak ≥ 3.0, which Home Assistant ships from 2026.6)
 - A Bluetooth adapter in range of the Casambi network — or an [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy.html) with **active connections enabled** near the pergola
 - A Casambi network on *Evolution* firmware (set up via the Casambi or Winsol app)
 
@@ -177,6 +177,8 @@ actions:
 
 ## Connection handling
 
+To notice when the network is back in range, the integration listens to its Bluetooth advertisements with **passive** scanning, which ESPHome proxies and most adapters support. On a local Linux adapter, BlueZ only offers passive scanning with its experimental D-Bus interfaces enabled (`Experimental = true` under `[General]` in `/etc/bluetooth/main.conf`); without it Home Assistant falls back to active scanning on its own.
+
 Losing the BLE link is normal — the adapter gets busy, a proxy reboots, the pergola is at the far end of the garden. The integration reconnects on its own: a single background attempt retries with a delay that starts at 2 s and doubles up to 5 minutes, backs off to a minute while HA reports the network out of range, and stops to ask you for the password if it was changed. A command that fails on Bluetooth both reports the failure and triggers a reconnect, and all entities go unavailable (and come back) the moment the link changes, so the **Status** connectivity sensor always reflects reality.
 
 ## Diagnostics & debugging
@@ -199,4 +201,4 @@ See `DEVELOPMENT.md` for the architecture, the decoded Winsol wire formats, and 
 ## Credits
 
 - [lkempf/casambi-bt-hass](https://github.com/lkempf/casambi-bt-hass) — the original integration and `casambi-bt` library this fork is based on.
-- [superkikim/casambi-bt-hass](https://github.com/superkikim/casambi-bt-hass) — the enhanced `casambi-bt-skk` library this fork uses, and the reverse engineering of the Winsol fixtures and sensor packet semantics.
+- [superkikim/casambi-bt-hass](https://github.com/superkikim/casambi-bt-hass) — the library work (sensor platforms, switch events, raw control access) now merged into `casambi-bt`, and the reverse engineering of the Winsol fixtures and sensor packet semantics.
