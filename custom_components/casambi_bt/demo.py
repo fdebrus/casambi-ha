@@ -409,6 +409,8 @@ class DemoCasambi:
                 (value << bit_index) & mask
             )
             state._raw_state = bytes(raw)  # noqa: SLF001
+        if control.type == UnitControlType.ONOFF:
+            state.onoff = bool(value)
         self._notify(unit)
 
     async def turnOn(self, target: Unit | Group | None) -> None:

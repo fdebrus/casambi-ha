@@ -121,7 +121,11 @@ async def test_relay_switch(
     mock_bluetooth: MagicMock,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Test that an on/off relay is a switch driven by turnOn/turnOff."""
+    """Test that an on/off relay is a switch writing its ONOFF bit.
+
+    The library's turnOn sends a SetLevel, which the Winsol On-Off ignores,
+    so both directions write the bit.
+    """
     await _setup(hass, mock_config_entry)
 
     entity_id = _entity_id(
@@ -135,10 +139,12 @@ async def test_relay_switch(
     await hass.services.async_call(
         SWITCH_DOMAIN, SERVICE_TURN_ON, {ATTR_ENTITY_ID: entity_id}, blocking=True
     )
-    mock_casambi.turnOn.assert_awaited_once()
-    (target,) = mock_casambi.turnOn.await_args.args
+    mock_casambi.setControlValue.assert_awaited_once()
+    target, control, value = mock_casambi.setControlValue.await_args.args
     assert isinstance(target, Unit)
     assert target.uuid == WINSOL_RELAY_UUID
+    assert (control.offset, value) == (0, 1)
+    mock_casambi.turnOn.assert_not_awaited()
     mock_casambi.setLevel.assert_not_awaited()
 
     # The network reports the relay closed.
@@ -151,9 +157,10 @@ async def test_relay_switch(
     await hass.services.async_call(
         SWITCH_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: entity_id}, blocking=True
     )
-    mock_casambi.turnOff.assert_awaited_once()
-    (target,) = mock_casambi.turnOff.await_args.args
+    target, control, value = mock_casambi.setControlValue.await_args.args
     assert target.uuid == WINSOL_RELAY_UUID
+    assert (control.offset, value) == (0, 0)
+    mock_casambi.turnOff.assert_not_awaited()
 
 
 async def test_relay_stale_light_is_removed(

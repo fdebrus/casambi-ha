@@ -156,6 +156,11 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
     E.g. the Winsol On-Off relay of a SO! Climate pergola, which drives
     the heating. It carries a single writable ONOFF bit and no dimmer, so
     it is a switch rather than a light.
+
+    The bit is written directly in both directions. The library's turnOn
+    sends a SetLevel ("restore last level"), which a unit without a dimmer
+    ignores: captured on the Winsol On-Off, ``SetLevel ff05`` left the
+    relay off, while turning it off already wrote the ONOFF bit.
     """
 
     _attr_device_class = SwitchDeviceClass.SWITCH
@@ -165,6 +170,11 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
         desc = TypedEntityDescription(key=unit.uuid, name=None, entity_type="relay")
         self._obj: Unit
         super().__init__(api, desc, unit)
+        self._control = next(
+            c
+            for c in unit.unitType.controls
+            if c.type == UnitControlType.ONOFF and not c.readonly
+        )
 
     @property
     def is_on(self) -> bool:
@@ -173,11 +183,15 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Close the relay."""
-        await self._async_casa_command(self._api.casa.turnOn(self._obj))
+        await self._async_casa_command(
+            self._api.casa.setControlValue(self._obj, self._control, 1)
+        )
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Open the relay."""
-        await self._async_casa_command(self._api.casa.turnOff(self._obj))
+        await self._async_casa_command(
+            self._api.casa.setControlValue(self._obj, self._control, 0)
+        )
 
 
 class CasambiSunTrackingSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
