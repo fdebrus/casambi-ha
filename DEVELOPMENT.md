@@ -130,6 +130,17 @@ during such a run (capture 1) reversed the screen. The 35 s travel model is
 confirmed by it too: 5.8 s of extension is raw 42.3, and the screen
 reported 42.
 
+The motor counts runs started by a position command too: after a SetLevel
+close the bit retracted the screen (capture 1), and after a SetSlider close
+it opened the louvres. While the bit is set the motor keeps reporting the
+position it last rested at, and after it clears it repeats that once before
+reporting where it stopped. `CasambiMotorCover` follows this to predict the
+bit's direction (up from the closed end, down from the open end, otherwise
+opposite the last run) and drives open/close with the bit whenever that is
+the requested way, so stop can clear it like the button. Otherwise
+open/close send a position, and the subclass handles stop (aim ahead on
+screens, nothing on louvres). The demo network always uses positions.
+
 So the toggle reverses, and the vendor app has no working stop either. A
 position sent while the screen moves is honoured only when it lies ahead
 of it: 52 at 7.1 s was just behind the screen and ignored, 65 at 8.8 s was
