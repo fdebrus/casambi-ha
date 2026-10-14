@@ -215,6 +215,19 @@ async def test_louvre_cover(
     assert target.uuid == WINSOL_LOUVRE_UUID
     assert value == 102
 
+    # Moving after a position command (start/stop bit clear): setting the
+    # bit would reverse the louvres, so stop leaves them alone.
+    await hass.services.async_call(
+        COVER_DOMAIN,
+        SERVICE_STOP_COVER,
+        {ATTR_ENTITY_ID: entity_id},
+        blocking=True,
+    )
+    mock_casambi.setControlValue.assert_not_awaited()
+
+    # Running from the wall button (bit 36 set): stop clears the bit.
+    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    louvre.state._raw_state = bytes.fromhex("1101000010")  # noqa: SLF001
     await hass.services.async_call(
         COVER_DOMAIN,
         SERVICE_STOP_COVER,
@@ -225,7 +238,7 @@ async def test_louvre_cover(
     target, control, value = mock_casambi.setControlValue.await_args.args
     assert isinstance(control, UnitControl)
     assert control.offset == 36
-    assert value == 1
+    assert value == 0
 
 
 async def test_louvre_channel_sensors(
@@ -372,6 +385,74 @@ async def test_screen_shows_estimated_position_while_moving(
         state = hass.states.get(entity_id)
         assert state.state == "opening"
         assert state.attributes[ATTR_CURRENT_POSITION] == 20
+
+
+async def test_screen_button_run(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a run started by the wall button: shown, and stopped like it.
+
+    Replays a SO! V4.1 driven by its wall button: press (bit 36 set, the
+    screen extends), press (bit clear, then target 42 = where it stopped
+    after 5.8 s), press (bit set again, it retracts).
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        async def stop() -> None:
+            await hass.services.async_call(
+                COVER_DOMAIN,
+                SERVICE_STOP_COVER,
+                {ATTR_ENTITY_ID: entity_id},
+                blocking=True,
+            )
+
+        await report("818b080000")
+        clock[0] = 1100.0
+
+        # First press: the bit is set, the reported target stays at 0.
+        await report("828b080010")
+        assert hass.states.get(entity_id).state == "closing"
+
+        clock[0] = 1105.8
+        await stop()
+        mock_casambi.setLevel.assert_not_awaited()
+        mock_casambi.setControlValue.assert_awaited_once()
+        _, control, value = mock_casambi.setControlValue.await_args.args
+        assert (control.offset, value) == (36, 0)
+
+        # The screen clears the bit, then reports where it stopped.
+        await report("818b080000")
+        # Frozen at the estimate, 5.8 s of a 35 s travel = raw 42 ...
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 84
+        # ... which is exactly where the screen reports it stopped.
+        await report("818b08a002")
+        assert hass.states.get(entity_id).attributes[ATTR_CURRENT_POSITION] == 84
+
+        # Third press: the bit is set again and it runs the other way.
+        clock[0] = 1110.0
+        await report("828b08a012")
+        assert hass.states.get(entity_id).state == "opening"
 
 
 @pytest.mark.parametrize(

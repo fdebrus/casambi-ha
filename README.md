@@ -64,18 +64,21 @@ Units are classified automatically by their control layout (`classify.py`) — m
 > **open** retracts the screen and **close** extends it. Confirmed on SO!
 > V4.1 hardware.
 >
-> **Screen stop.** A Winsol SO! screen's own start/stop control reverses
-> the motion, and a position sent while it moves is only honoured when it
-> lies *ahead* of it. **Stop** therefore sends the estimated position plus
-> about 1.5 s of travel in the direction of motion: the screen halts a few
-> centimetres past where you pressed. Nothing is sent when it is at rest or
-> about to arrive anyway.
+> **Stop.** Winsol screens and louvres have a start/stop bit that works
+> like their wall button: setting it starts the motor in the direction
+> opposite its last run, clearing it stops it. A run started from the wall
+> button or the app is therefore stopped by clearing the bit. A run started
+> from Home Assistant (a position command) leaves the bit clear, and
+> setting it would reverse the motor, so a **screen** is stopped by sending
+> a position about 1.5 s of travel ahead of it (it ignores one behind it),
+> and the **louvres** are left running until their travel time is known.
 >
 > **Screen position while moving.** A screen reports where it is heading,
-> not where it is. While it moves, Home Assistant shows it as *opening* or
-> *closing* with a position estimated from the 35 s travel time it
-> reports, refreshed every second, and settles on the target once that
-> time has passed.
+> not where it is. While it moves — from Home Assistant, the app or the
+> wall button — Home Assistant shows it as *opening* or *closing* with a
+> position estimated from the 35 s travel time it reports, refreshed every
+> second. A wall-button stop after 5.8 s was estimated at raw 42; the
+> screen reported 42.
 
 ## Demo mode
 
