@@ -289,8 +289,13 @@ warmer than the setpoint tilts toward shade, colder toward sun. The
 temperature source entity is chosen in the integration options.
 
 **Weather protection**: a network-level switch (created when a sensor
-platform exists). While on: rain (packet 0 ≥ 2) closes all louvres and
-pauses sun tracking until dry; wind at or above the configured threshold
+platform exists or a rain entity is set in the options, and there is a
+louvre or screen to protect). While on: rain closes all louvres and
+pauses sun tracking until dry. Rain is the OR of the sensor platform
+(packet 0 ≥ 2) and the rain entity (`entity_reports_rain`: binary sensor
+on, weather condition rainy/pouring/lightning-rainy/snowy-rainy/hail, any
+other numeric state above 0; unavailable/unknown/non-numeric keep the last
+reading); wind at or above the configured threshold
 (default 35 km/h) retracts all screens, latched with 80% hysteresis, and
 never re-extends them automatically.
 

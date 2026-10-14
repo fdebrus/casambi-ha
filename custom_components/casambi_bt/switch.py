@@ -7,7 +7,8 @@
   terrace is warmer than the setpoint and toward more sun when colder.
 - Weather protection: closes the louvres while it rains and retracts
   screens when the wind exceeds a threshold, based on the readings of a
-  Casambi sensor platform.
+  Casambi sensor platform. Rain can also come from any Home Assistant
+  entity chosen in the options, for pergolas without a sensor platform.
 """
 
 from __future__ import annotations
@@ -19,16 +20,27 @@ from typing import Any, Final, cast
 from CasambiBt import Unit, UnitControl, UnitControlType
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.const import STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import (
+    Event,
+    EventStateChangedData,
+    HomeAssistant,
+    State,
+    callback,
+)
 from homeassistant.helpers.entity import EntityCategory, EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_track_state_change_event,
+    async_track_time_interval,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
 from .const import (
     CONF_LOUVRE_AZIMUTH,
+    CONF_RAIN_ENTITY,
     CONF_TEMPERATURE_ENTITY,
     CONF_WIND_THRESHOLD,
     DEFAULT_LOUVRE_AZIMUTH,
@@ -72,6 +84,31 @@ DEFAULT_TEMP_SETPOINT: Final = 22.0
 # Re-arm the wind latch when the wind drops below this fraction of the
 # threshold.
 WIND_HYSTERESIS: Final = 0.8
+
+# Weather entity conditions that count as rain.
+RAIN_CONDITIONS: Final = frozenset(
+    {"rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"}
+)
+
+
+def entity_reports_rain(state: State | None) -> bool | None:
+    """Return whether a rain entity reports rain, or None if it can't tell.
+
+    A binary sensor reports rain when on (e.g. a moisture sensor), a
+    weather entity when its condition is a rainy one, and any other sensor
+    when its value is above zero (e.g. a precipitation rate in mm/h).
+    """
+    if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+        return None
+    if state.domain == "binary_sensor":
+        return state.state == STATE_ON
+    if state.domain == "weather":
+        return state.state in RAIN_CONDITIONS
+    try:
+        return float(state.state) > 0
+    except ValueError:
+        return None
+
 
 # The sensor platform's writable enable bits, in bit-offset order
 # (Sensor Platform V4: wind at 34, rain at 35, light at 36, motion at 37).
@@ -140,7 +177,8 @@ async def async_setup_entry(
             for kind in ("rain", "presence")
         )
 
-    if sensor_platforms and (louvres or screens):
+    rain_entity = entry_option(config_entry, CONF_RAIN_ENTITY, None)
+    if (sensor_platforms or rain_entity) and (louvres or screens):
         entities.append(
             CasambiWeatherProtectionSwitch(
                 casa_api, config_entry, sensor_platforms, louvres, screens
@@ -404,11 +442,13 @@ class CasambiSensorEnableSwitch(CasambiBroadcastUnitEntity, SwitchEntity):
 
 
 class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, RestoreEntity):
-    """Protects the pergola based on the sensor platform readings.
+    """Protects the pergola based on the weather readings.
 
     While on: rain closes the louvres (sealed roof) and pauses sun
     tracking; wind above the configured threshold retracts the screens.
-    Screens are not extended again automatically.
+    Screens are not extended again automatically. Rain comes from the
+    sensor platform and from the rain entity chosen in the options, and
+    counts while either reports it; wind only from the sensor platform.
     """
 
     _attr_entity_category = EntityCategory.CONFIG
@@ -432,15 +472,27 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         self._louvres = louvres
         self._screens = screens
         self._wind_latched = False
+        self._rain_entity: str | None = entry_option(
+            config_entry, CONF_RAIN_ENTITY, None
+        )
+        self._platform_rain = False
+        self._entity_rain = False
 
     async def async_added_to_hass(self) -> None:
-        """Restore state and start listening to sensor platform updates."""
+        """Restore state and start listening to the weather sources."""
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         if last_state is not None and last_state.state == "on":
             self._attr_is_on = True
         for unit in self._sensor_platforms:
             self._api.register_unit_updates(unit, self._sensor_update)
+        if self._rain_entity:
+            self.async_on_remove(
+                async_track_state_change_event(
+                    self.hass, [self._rain_entity], self._rain_entity_changed
+                )
+            )
+            self._rain_entity_update(self.hass.states.get(self._rain_entity))
 
     async def async_will_remove_from_hass(self) -> None:
         """Stop listening to sensor platform updates."""
@@ -454,13 +506,44 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         self.async_write_ha_state()
         for unit in self._sensor_platforms:
             self._sensor_update(unit)
+        if self._rain_entity:
+            self._rain_entity_update(self.hass.states.get(self._rain_entity))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable weather protection."""
         self._attr_is_on = False
         self._api.rain_active = False
+        self._platform_rain = False
+        self._entity_rain = False
         self._wind_latched = False
         self.async_write_ha_state()
+
+    @callback
+    def _rain_entity_changed(self, event: Event[EventStateChangedData]) -> None:
+        self._rain_entity_update(event.data["new_state"])
+
+    @callback
+    def _rain_entity_update(self, state: State | None) -> None:
+        """Evaluate the rain entity; keep the last reading when it can't tell."""
+        if not self._attr_is_on:
+            return
+        raining = entity_reports_rain(state)
+        if raining is not None:
+            self._entity_rain = raining
+            self._update_rain()
+
+    @callback
+    def _update_rain(self) -> None:
+        """Close the louvres when rain starts and release them when it stops."""
+        raining = self._platform_rain or self._entity_rain
+        if raining and not self._api.rain_active:
+            self._api.rain_active = True
+            _LOGGER.info("Weather protection: rain detected, closing louvres")
+            for louvre in self._louvres:
+                self.hass.async_create_task(self._async_close_louvre(louvre))
+        elif not raining and self._api.rain_active:
+            self._api.rain_active = False
+            _LOGGER.info("Weather protection: rain stopped")
 
     @callback
     def _sensor_update(self, unit: Unit) -> None:
@@ -472,15 +555,8 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
 
         rain_raw = cache.get(PACKET_RAIN)
         if rain_raw is not None:
-            raining = rain_raw >= RAIN_THRESHOLD
-            if raining and not self._api.rain_active:
-                self._api.rain_active = True
-                _LOGGER.info("Weather protection: rain detected, closing louvres")
-                for louvre in self._louvres:
-                    self.hass.async_create_task(self._async_close_louvre(louvre))
-            elif not raining and self._api.rain_active:
-                self._api.rain_active = False
-                _LOGGER.info("Weather protection: rain stopped")
+            self._platform_rain = rain_raw >= RAIN_THRESHOLD
+            self._update_rain()
 
         wind_raw = cache.get(PACKET_WIND)
         if wind_raw is not None:

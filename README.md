@@ -68,6 +68,7 @@ All later settings live behind the integration's **Configure** button:
 | Pergola orientation (azimuth) | Compass direction the pergola faces, for sun tracking (180 = south) |
 | Wind threshold | Wind speed (km/h) at which weather protection retracts the screens |
 | Temperature sensor | Any HA temperature sensor, used by the temperature control |
+| Rain sensor | Any HA rain source (binary sensor, precipitation sensor or weather entity), used by weather protection — needed when the pergola has no Sensor Platform |
 
 ## What gets created
 
@@ -139,10 +140,10 @@ Pick a **temperature sensor** in the options, set the **Temperature setpoint** (
 
 ### 🌧️💨 Weather protection
 
-Appears as a network-level **Weather protection** switch when a Sensor Platform is in the network. While on:
+Appears as a network-level **Weather protection** switch when a Sensor Platform is in the network, or when a **rain sensor** is chosen in the options. That can be any Home Assistant entity: a binary sensor (on = rain, e.g. a moisture sensor), a precipitation sensor (rain above 0, e.g. [Buienradar](https://www.home-assistant.io/integrations/buienradar/)'s precipitation in mm/h) or a weather entity (rainy, pouring, lightning-rainy, snowy-rainy or hail). Rain counts while either source reports it; an unavailable sensor keeps its last reading. While on:
 
 - **Rain** → all louvres close into a sealed roof, and sun tracking pauses until the sensor reads dry again.
-- **Wind ≥ threshold** (default 35 km/h) → all screens retract immediately. Latched with hysteresis; screens are **never re-extended automatically** — re-extend them yourself when the storm has passed.
+- **Wind ≥ threshold** (default 35 km/h, Sensor Platform only) → all screens retract immediately. Latched with hysteresis; screens are **never re-extended automatically** — re-extend them yourself when the storm has passed.
 
 All switch states and dials survive HA restarts.
 

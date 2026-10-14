@@ -3,11 +3,17 @@
 from unittest.mock import MagicMock, patch
 
 from CasambiBt import Unit
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.casambi_bt.const import CONF_TEMPERATURE_ENTITY, DOMAIN
+from custom_components.casambi_bt.const import (
+    CONF_RAIN_ENTITY,
+    CONF_TEMPERATURE_ENTITY,
+    DOMAIN,
+)
+from custom_components.casambi_bt.switch import entity_reports_rain
 from homeassistant.const import ATTR_ENTITY_ID
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 
 from .conftest import SENSOR_PLATFORM_UUID, WINSOL_LOUVRE_UUID, WINSOL_SCREEN_UUID
@@ -203,3 +209,142 @@ async def test_sensor_enable_switches(
     # All four enable switches exist (offsets 34-37).
     for offset in (35, 36, 37):
         assert _entity_id(hass, "switch", f"{prefix}-enable-{offset}") is not None
+
+
+RAIN_ENTITY = "binary_sensor.terrace_rain"
+
+
+async def _setup_with_rain_entity(
+    hass: HomeAssistant, entry: MockConfigEntry, rain_entity: str
+) -> None:
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={CONF_RAIN_ENTITY: rain_entity}
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_rain_entity_without_sensor_platform(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a rain entity drives weather protection on its own."""
+    mock_casambi.units = [
+        u for u in mock_casambi.units if u.uuid != SENSOR_PLATFORM_UUID
+    ]
+    hass.states.async_set(RAIN_ENTITY, "off")
+    await _setup_with_rain_entity(hass, mock_config_entry, RAIN_ENTITY)
+
+    api = mock_config_entry.runtime_data
+    protection_id = _entity_id(
+        hass, "switch", f"{mock_casambi.networkId}-weather-protection"
+    )
+
+    # Rain while protection is off is ignored.
+    hass.states.async_set(RAIN_ENTITY, "on")
+    await hass.async_block_till_done()
+    mock_casambi.setSlider.assert_not_awaited()
+
+    # Enabling it while raining closes the louvres at once.
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+    await hass.async_block_till_done()
+    mock_casambi.setSlider.assert_awaited_once()
+    louvre_target, louvre_raw = mock_casambi.setSlider.await_args.args
+    assert louvre_target.uuid == WINSOL_LOUVRE_UUID
+    assert louvre_raw == 0
+    assert api.rain_active is True
+    # No wind source: the screens are never touched.
+    mock_casambi.setLevel.assert_not_awaited()
+
+    # An unavailable sensor keeps the last reading.
+    hass.states.async_set(RAIN_ENTITY, "unavailable")
+    await hass.async_block_till_done()
+    assert api.rain_active is True
+
+    hass.states.async_set(RAIN_ENTITY, "off")
+    await hass.async_block_till_done()
+    assert api.rain_active is False
+    mock_casambi.setSlider.assert_awaited_once()
+
+
+async def test_rain_entity_and_sensor_platform_combine(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that rain counts while either source reports it."""
+    hass.states.async_set(RAIN_ENTITY, "on")
+    await _setup_with_rain_entity(hass, mock_config_entry, RAIN_ENTITY)
+
+    api = mock_config_entry.runtime_data
+    sensor_unit = _get_unit(mock_casambi, SENSOR_PLATFORM_UUID)
+    protection_id = _entity_id(
+        hass, "switch", f"{mock_casambi.networkId}-weather-protection"
+    )
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert api.rain_active is True
+
+    # The sensor platform reads dry: the rain entity still reports rain.
+    sensor_unit._sensor_cache[0] = 1  # noqa: SLF001
+    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    await hass.async_block_till_done()
+    assert api.rain_active is True
+
+    hass.states.async_set(RAIN_ENTITY, "off")
+    await hass.async_block_till_done()
+    assert api.rain_active is False
+
+
+async def test_no_weather_protection_without_rain_source(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that weather protection needs a sensor platform or rain entity."""
+    mock_casambi.units = [
+        u for u in mock_casambi.units if u.uuid != SENSOR_PLATFORM_UUID
+    ]
+    await _setup(hass, mock_config_entry)
+
+    registry = er.async_get(hass)
+    assert (
+        registry.async_get_entity_id(
+            "switch", DOMAIN, f"{mock_casambi.networkId}-weather-protection"
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("entity_id", "value", "expected"),
+    [
+        ("binary_sensor.rain", "on", True),
+        ("binary_sensor.rain", "off", False),
+        ("weather.home", "rainy", True),
+        ("weather.home", "pouring", True),
+        ("weather.home", "cloudy", False),
+        ("sensor.precipitation", "0.4", True),
+        ("sensor.precipitation", "0", False),
+        ("sensor.precipitation", "n/a", None),
+        ("sensor.precipitation", "unknown", None),
+        ("binary_sensor.rain", "unavailable", None),
+    ],
+)
+def test_entity_reports_rain(entity_id: str, value: str, expected: bool | None) -> None:
+    """Test how each kind of rain entity is read."""
+    assert entity_reports_rain(State(entity_id, value)) is expected
+
+
+def test_entity_reports_rain_missing() -> None:
+    """Test that a missing entity can't tell."""
+    assert entity_reports_rain(None) is None
