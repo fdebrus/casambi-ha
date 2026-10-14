@@ -50,7 +50,7 @@ Units are classified automatically by their control layout (`classify.py`) — m
 |---|---|
 | Lights / LED (dimmer, RGB(W), tunable white, XY) | `light` entities, plus group lights |
 | Casambi scenes | `scene` entities |
-| **Winsol louvre motor** (Lamel) | `cover` (blind) with position 0–100% (= 0–142°) and **Stop**, plus the automation entities below, plus one raw diagnostic `sensor` per channel the motor multiplexes into its state (not decoded yet — see `DEVELOPMENT.md`) |
+| **Winsol louvre motor** (Lamel) | `cover` (blind) with position 0–100% (= 0–142°) and **Stop**, plus the automation entities below, plus its four multiplexed sensors: **temperature** (°C) and, as diagnostics, overcurrent events, travel distance and module state |
 | **Winsol SO! screen** | `cover` (shade) with position and Stop |
 | **Winsol On-Off relay** (e.g. the pergola heating) | `switch` |
 | **Sensor Platform V4** (weather option) | `sensor`: wind speed (km/h), solar radiation, illuminance (lx); `binary_sensor`: rain, motion, presence; `switch`: per-element enables (wind/rain/light/motion) |

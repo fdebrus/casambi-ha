@@ -256,7 +256,11 @@ async def test_louvre_channel_sensors(
     mock_bluetooth: MagicMock,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Test the raw multiplexed sensor channels of the louvre motor."""
+    """Test the multiplexed sensor channels of the louvre motor.
+
+    Named after the Casambi fixture definition (sensor tag = channel - 1):
+    Temperatuur (°C), #Overcurrent, Travel Distance, Module State.
+    """
     await _setup(hass, mock_config_entry)
 
     prefix = f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}"
@@ -265,27 +269,40 @@ async def test_louvre_channel_sensors(
         _entity_id(hass, "sensor", f"{prefix}-channel-{n}") for n in range(1, 5)
     ]
     assert registry.async_get_entity_id("sensor", DOMAIN, f"{prefix}-channel-5") is None
-    entry = registry.async_get(channel_ids[0])
-    assert entry is not None
-    assert entry.entity_category is er.EntityCategory.DIAGNOSTIC
+
+    expected = [
+        # (name, device class, unit, state class, category)
+        ("Temperature", "temperature", "°C", "measurement", None),
+        ("Overcurrent events", None, None, "total_increasing", "diagnostic"),
+        ("Travel distance", None, None, "total_increasing", "diagnostic"),
+        ("Module state", None, None, "measurement", "diagnostic"),
+    ]
+    for entity_id, (name, device_class, unit, state_class, category) in zip(
+        channel_ids, expected, strict=True
+    ):
+        entry = registry.async_get(entity_id)
+        assert entry is not None
+        assert entry.entity_category == category
+        attributes = hass.states.get(entity_id).attributes
+        assert attributes["friendly_name"] == f"Pergola Louvres {name}"
+        assert attributes.get("device_class") == device_class
+        assert attributes.get("unit_of_measurement") == unit
+        assert attributes["state_class"] == state_class
 
     # The all-zero initial state carries channel 0, which is nobody's.
     for entity_id in channel_ids:
         assert hass.states.get(entity_id).state == STATE_UNKNOWN
 
-    # Packets captured on a Winsol Lamel Standard: channel 1 = 30 while
-    # the slider reads 109, then channel 3 = 20.
+    # One full rotation captured on a Winsol Lamel Standard (louvres closed):
+    # 17 °C, no overcurrent, travel distance 29, module state 50.
     louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
     handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
-    for packet in ("e10100d006", "430100d006"):
+    for packet in ("1101000000", "0200000000", "d301000000", "2403000000"):
         louvre.state._raw_state = bytes.fromhex(packet)  # noqa: SLF001
         handler(louvre)
         await hass.async_block_till_done()
 
-    assert hass.states.get(channel_ids[0]).state == "30"
-    assert hass.states.get(channel_ids[1]).state == STATE_UNKNOWN
-    assert hass.states.get(channel_ids[2]).state == "20"
-    assert hass.states.get(channel_ids[3]).state == STATE_UNKNOWN
+    assert [hass.states.get(e).state for e in channel_ids] == ["17", "0", "29", "50"]
 
     # Screens multiplex travel times the same way but get no channel sensors.
     screen_prefix = f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}"

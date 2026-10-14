@@ -103,6 +103,18 @@
       "louvre_channel": {
         "name": "Sensor channel {channel}"
       },
+      "louvre_module_state": {
+        "name": "Module state"
+      },
+      "louvre_overcurrent": {
+        "name": "Overcurrent events"
+      },
+      "louvre_temperature": {
+        "name": "Temperature"
+      },
+      "louvre_travel_distance": {
+        "name": "Travel distance"
+      },
       "solar": {
         "name": "Solar radiation"
       },
