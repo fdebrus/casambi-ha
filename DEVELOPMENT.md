@@ -56,7 +56,7 @@ which this integration uses):
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
 | Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27) | Cover (blind) with position + stop, plus one raw diagnostic sensor per channel |
-| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position + stop (stop = SetLevel to the estimated reached position) |
+| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position, **no stop** (cannot be stopped mid-travel) |
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (written with `turnOn`/`turnOff`) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
 
@@ -85,31 +85,35 @@ closed flat into a sealed roof, 142 fully open, matching the Home Assistant
 position straight through. Confirmed on the same pergola — with the roof
 physically closed the unit reports `slider: 0` and the cover shows closed.
 
-### Screen stop — `$toggle` reverses, it does not stop
+### Screens cannot be stopped mid-travel
 
-The stop used to write the screen's onoff control (`$toggle`, bit 36) into
-its last reported state. On the SO! V4.1 that reverses the motion. Captured
-on the screen at device id 1 (5-byte states, little-endian):
+Three captures on the SO! V4.1 at device id 1 (5-byte states,
+little-endian; dimmer = bits 28–35 = the *target*, `$toggle` = bit 36):
 
 ```text
+# 1. Stop as the onoff toggle (what the integration first did)
 17:43:39.846  sent      SetLevel ff               close
 17:43:40.000  reported  818b08f00f                target 255, toggle 0
-17:43:46.904  sent      SetState 818b08f01f       stop: target 255, toggle 1
-17:43:47.371  reported  818b080010                target 0 (retracting), toggle 1
+17:43:46.904  sent      SetState 818b08f01f       target 255, toggle 1
+17:43:47.371  reported  818b080010                target 0 -> retracts
+
+# 2. Stop as the estimated reached position (35 s full travel)
+17:51:55.073  sent      SetLevel ff               close
+17:52:02.070  sent      SetLevel 34               position 52 at 7 s
+17:52:02.290  reported  818b084003                target 52 acknowledged
+              ... the screen kept extending to the end
+
+# 3. The Casambi app's own close then stop (nothing sent by HA)
+17:58:21.169  reported  818b084003                target 52
+17:58:28.575  reported  818b080000                target 0 -> retracts
 ```
 
-The screen also reports the position it is heading for, not where it is,
-so its current position is not on the wire. `CasambiScreenCover` therefore
-tracks each target change with a timestamp and estimates the reached
-position from the full travel time on sensor channels 1 and 2 (35000 ms
-both, so which is which direction is unconfirmed). Stop sends `SetLevel`
-with that estimate, 0.3 s ahead for the command latency, and does nothing
-once the screen has had time to reach its target. A motion started before
-Home Assistant saw the screen's previous target cannot be estimated and is
-left alone.
-
-The louvres' onoff control is named `$startstop` instead and keeps the
-toggle-based stop until a capture says otherwise.
+So the toggle reverses, a position sent while moving is acknowledged but
+only acted on after the current travel, and the vendor app has no working
+stop either. `CasambiScreenCover` therefore withdraws `STOP` (open, close
+and set position remain), and the cover blueprint's hold-to-stop step uses
+`continue_on_error` so it is a no-op on a screen. The louvres' onoff
+control is named `$startstop` and keeps the toggle-based stop.
 
 ### Real-world network layout
 
