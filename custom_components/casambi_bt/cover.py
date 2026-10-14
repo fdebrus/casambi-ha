@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from abc import ABCMeta
+from collections.abc import Callable
+from datetime import timedelta
 import logging
+from time import monotonic
 from typing import Any, Final
 
 from CasambiBt import Group, Unit, UnitControlType
@@ -14,8 +17,9 @@ from homeassistant.components.cover import (
     CoverEntity,
     CoverEntityFeature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_track_time_interval
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
@@ -26,6 +30,7 @@ from .entities import (
     CasambiUnitEntity,
     TypedEntityDescription,
 )
+from .sensor import decode_louvre_channel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +38,16 @@ _LOGGER = logging.getLogger(__name__)
 PARALLEL_UPDATES = 0
 
 CASA_RAW_MAX: Final = 255
+
+# Winsol SO! screens report their full-range travel time in milliseconds on
+# sensor channels 1 and 2 (35000 on the hardware this was captured on, the
+# same both ways, so which channel is which direction is an assumption).
+TRAVEL_CHANNEL_EXTEND: Final = 1
+TRAVEL_CHANNEL_RETRACT: Final = 2
+DEFAULT_TRAVEL_MS: Final = 35000
+
+# How often the estimated position of a moving screen is refreshed.
+MOTION_UPDATE_INTERVAL: Final = timedelta(seconds=1)
 
 
 async def async_setup_entry(
@@ -253,13 +268,17 @@ class CasambiScreenCover(CasambiMotorCover):
     for closed. Confirmed on Winsol SO! V4.1 hardware, where open and
     close were swapped before this inversion.
 
-    The screen cannot be stopped mid-travel from Casambi. It reports the
-    position it is heading for, its onoff control (``$toggle``) reverses
-    the motion, and a new position sent while it moves is ignored until
-    it has finished. Captured on SO! V4.1 hardware: ``$toggle`` written
-    while extending made it retract; position 52 sent seven seconds into
-    a close was acknowledged but the screen kept extending; the Casambi
-    app's own stop reversed it too. Stop is therefore not offered.
+    The screen reports the position it is heading for, not where it is,
+    so a close showed "closed" the moment it was sent. While it moves the
+    position is therefore estimated from when the target changed and the
+    full travel time the motor reports on its sensor channels (35 s), and
+    the cover reports opening or closing until the estimate arrives.
+
+    The screen cannot be stopped mid-travel from Casambi: its onoff control
+    (``$toggle``) reverses the motion, a position sent seven seconds into a
+    close was acknowledged but the screen kept extending, and the Casambi
+    app's own stop reversed it too (SO! V4.1 captures). Stop is therefore
+    not offered.
     """
 
     _attr_device_class = CoverDeviceClass.SHADE
@@ -273,14 +292,126 @@ class CasambiScreenCover(CasambiMotorCover):
             | CoverEntityFeature.CLOSE
             | CoverEntityFeature.SET_POSITION
         )
+        self._travel_ms: dict[int, int] = {}
+        self._target: int | None = None
+        self._move_from = 0.0
+        self._move_start: float | None = None
+        self._cancel_tick: Callable[[], None] | None = None
+        self._track_motion(unit)
+
+    def _travel_seconds(self, extending: bool) -> float:
+        """Return the full-range travel time in the given direction."""
+        channel = TRAVEL_CHANNEL_EXTEND if extending else TRAVEL_CHANNEL_RETRACT
+        travel_ms = self._travel_ms.get(channel) or next(
+            iter(self._travel_ms.values()), DEFAULT_TRAVEL_MS
+        )
+        return max(travel_ms, 1) / 1000
+
+    def _estimate(self, now: float) -> float | None:
+        """Return the estimated raw position (0-255) at ``now``."""
+        if self._target is None:
+            return None
+        if self._move_start is None:
+            return float(self._target)
+        distance = self._target - self._move_from
+        speed = CASA_RAW_MAX / self._travel_seconds(distance > 0)
+        travelled = (now - self._move_start) * speed
+        if travelled >= abs(distance):
+            return float(self._target)
+        return self._move_from + (travelled if distance > 0 else -travelled)
+
+    def _moving(self) -> bool:
+        """Return True while the screen is estimated to be travelling."""
+        if self._move_start is None:
+            return False
+        if self._estimate(monotonic()) == self._target:
+            self._move_start = None
+            return False
+        return True
+
+    def _track_motion(self, unit: Unit) -> bool:
+        """Follow a state update; return True if a new motion started."""
+        state = unit.state
+        if state is None:
+            return False
+        decoded = decode_louvre_channel(state.raw_state)
+        if decoded is not None and decoded[0] in (
+            TRAVEL_CHANNEL_EXTEND,
+            TRAVEL_CHANNEL_RETRACT,
+        ):
+            self._travel_ms[decoded[0]] = decoded[1]
+        target = state.dimmer
+        if target is None or target == self._target:
+            return False
+        previous = self._target
+        now = monotonic()
+        estimate = self._estimate(now)
+        self._target = target
+        if previous is None or estimate is None:
+            return False
+        # A new target: the screen sets off from where it is now.
+        self._move_from = estimate
+        self._move_start = now
+        return True
+
+    @callback
+    def _change_callback(self, unit: Unit) -> None:
+        if self._track_motion(unit) and self._cancel_tick is None:
+            self._cancel_tick = async_track_time_interval(
+                self.hass, self._tick, MOTION_UPDATE_INTERVAL
+            )
+        super()._change_callback(unit)
+
+    @callback
+    def _tick(self, _now: Any) -> None:
+        """Refresh the estimated position while the screen moves."""
+        if not self._moving():
+            self._stop_ticking()
+        self.async_write_ha_state()
+
+    def _stop_ticking(self) -> None:
+        if self._cancel_tick is not None:
+            self._cancel_tick()
+            self._cancel_tick = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Stop refreshing when the entity is removed."""
+        self._stop_ticking()
+        await super().async_will_remove_from_hass()
 
     @property
     def current_cover_position(self) -> int | None:
-        """Return the screen position (0-100, inverted from the dimmer)."""
+        """Return the screen position (0-100, inverted from the dimmer).
+
+        While the screen travels this is the estimated position rather
+        than the reported target.
+        """
+        if self._moving():
+            estimate = self._estimate(monotonic())
+            if estimate is not None:
+                return 100 - round(estimate * 100 / CASA_RAW_MAX)
         unit = self._obj
         if unit.state is not None and unit.state.dimmer is not None:
             return 100 - round(unit.state.dimmer * 100 / CASA_RAW_MAX)
         return None
+
+    @property
+    def is_opening(self) -> bool:
+        """Return True while the screen retracts."""
+        return (
+            self._moving()
+            and self._target is not None
+            and self._target < self._move_from
+        )
+
+    @property
+    def is_closing(self) -> bool:
+        """Return True while the screen extends."""
+        return (
+            self._moving()
+            and self._target is not None
+            and self._target > self._move_from
+        )
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open (retract) the screen."""

@@ -70,6 +70,12 @@ Units are classified automatically by their control layout (`classify.py`) — m
 > Casambi app's own stop reverses it too. Home Assistant therefore offers
 > open, close and set position for screens, but no Stop. The louvres keep
 > theirs.
+>
+> **Screen position while moving.** A screen reports where it is heading,
+> not where it is. While it moves, Home Assistant shows it as *opening* or
+> *closing* with a position estimated from the 35 s travel time it
+> reports, refreshed every second, and settles on the target once that
+> time has passed.
 
 ## Demo mode
 

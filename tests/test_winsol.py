@@ -1,11 +1,15 @@
 """Tests for Winsol pergola support: louvre cover, screen cover, sensors."""
 
 from dataclasses import replace
-from unittest.mock import MagicMock
+from datetime import timedelta
+from unittest.mock import MagicMock, patch
 
 from CasambiBt import Unit, UnitControl, UnitControlType
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.casambi_bt.classify import UnitKind, classify_unit
 from custom_components.casambi_bt.const import DOMAIN
@@ -30,6 +34,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .conftest import (
     NETWORK_ID,
@@ -299,6 +304,75 @@ async def test_screen_cover(
     assert target.uuid == WINSOL_SCREEN_UUID
     # 80% open -> 20% extended -> raw 51.
     assert value == 51
+
+
+async def test_screen_shows_estimated_position_while_moving(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a moving screen shows closing and an estimated position.
+
+    The SO! reports its target the moment a close is sent; showing that as
+    the position made the screen look closed straight away.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        async def tick(seconds: float) -> None:
+            clock[0] += seconds
+            async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+            await hass.async_block_till_done()
+
+        # Captured SO! V4.1 states: retracted at rest (channel 1 = 35000 ms
+        # travel), let the fixture's own move from 64 finish first.
+        await report("818b080000")
+        clock[0] = 1020.0
+        await tick(0)
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 100
+
+        # Close: the screen reports target 255 at once.
+        await report("818b08f00f")
+        state = hass.states.get(entity_id)
+        assert state.state == "closing"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 100
+
+        # Halfway through the 35 s travel.
+        await tick(17.5)
+        state = hass.states.get(entity_id)
+        assert state.state == "closing"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 50
+
+        # Travel time elapsed: closed, and the refresh stops.
+        await tick(18)
+        state = hass.states.get(entity_id)
+        assert state.state == "closed"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 0
+
+        # Open again from closed: opening.
+        await report("818b080000")
+        await tick(7)
+        state = hass.states.get(entity_id)
+        assert state.state == "opening"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 20
 
 
 async def test_screen_offers_no_stop(

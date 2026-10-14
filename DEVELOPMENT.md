@@ -56,7 +56,7 @@ which this integration uses):
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
 | Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27) | Cover (blind) with position + stop, plus one raw diagnostic sensor per channel |
-| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position, **no stop** (cannot be stopped mid-travel) |
+| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position (estimated from the travel time while moving, with opening/closing), **no stop** (cannot be stopped mid-travel) |
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (written with `turnOn`/`turnOff`) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
 
@@ -111,7 +111,11 @@ little-endian; dimmer = bits 28–35 = the *target*, `$toggle` = bit 36):
 So the toggle reverses, a position sent while moving is acknowledged but
 only acted on after the current travel, and the vendor app has no working
 stop either. `CasambiScreenCover` therefore withdraws `STOP` (open, close
-and set position remain), and the cover blueprint's hold-to-stop step uses
+and set position remain). Because the reported dimmer is the target, a
+close used to show "closed" at once; the cover now estimates the position
+from the timestamp of each target change and the travel time on sensor
+channels 1 and 2 (35000 ms, default when not seen yet), reports opening or
+closing meanwhile and refreshes once a second until the estimate arrives, and the cover blueprint's hold-to-stop step uses
 `continue_on_error` so it is a no-op on a screen. The louvres' onoff
 control is named `$startstop` and keeps the toggle-based stop.
 
