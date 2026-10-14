@@ -32,7 +32,6 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
@@ -375,47 +374,85 @@ async def test_screen_shows_estimated_position_while_moving(
         assert state.attributes[ATTR_CURRENT_POSITION] == 20
 
 
-async def test_screen_offers_no_stop(
+@pytest.mark.parametrize(
+    ("rest", "move", "expected"),
+    [
+        # Closing from retracted: 7 s + 1.5 s ahead of a 35 s travel,
+        # rounded further down the way -> raw 62.
+        ("818b080000", "818b08f00f", 62),
+        # Opening from extended: same distance the other way -> raw 193.
+        ("818b08f00f", "818b080000", 193),
+    ],
+)
+async def test_screen_stop_aims_ahead(
     hass: HomeAssistant,
     mock_casambi: MagicMock,
     mock_bluetooth: MagicMock,
     mock_config_entry: MockConfigEntry,
+    rest: str,
+    move: str,
+    expected: int,
 ) -> None:
-    """Test that screens do not offer a stop they cannot perform.
+    """Test that stop sends a position just ahead of the moving screen.
 
     On a Winsol SO! the onoff ($toggle) control reverses the motion and a
-    position sent while moving is ignored, so nothing stops it mid-travel.
+    position behind the moving screen is ignored, while one ahead of it
+    stops it there.
     """
-    await _setup(hass, mock_config_entry)
-    entity_id = _entity_id(
-        hass,
-        COVER_DOMAIN,
-        f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
-    )
-    features = hass.states.get(entity_id).attributes["supported_features"]
-    assert not features & CoverEntityFeature.STOP
-    assert features & CoverEntityFeature.SET_POSITION
-
-    with pytest.raises(HomeAssistantError):
-        await hass.services.async_call(
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
             COVER_DOMAIN,
-            SERVICE_STOP_COVER,
-            {ATTR_ENTITY_ID: entity_id},
-            blocking=True,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
         )
-    mock_casambi.setControlValue.assert_not_awaited()
-    mock_casambi.setLevel.assert_not_awaited()
+        assert (
+            hass.states.get(entity_id).attributes["supported_features"]
+            & CoverEntityFeature.STOP
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
-    # The louvres keep their stop.
-    louvre = _entity_id(
-        hass,
-        COVER_DOMAIN,
-        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover",
-    )
-    assert (
-        hass.states.get(louvre).attributes["supported_features"]
-        & CoverEntityFeature.STOP
-    )
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        async def stop() -> None:
+            await hass.services.async_call(
+                COVER_DOMAIN,
+                SERVICE_STOP_COVER,
+                {ATTR_ENTITY_ID: entity_id},
+                blocking=True,
+            )
+
+        # At rest (the fixture's own move from 64 has long finished).
+        await report(rest)
+        clock[0] = 1100.0
+        await stop()
+        mock_casambi.setLevel.assert_not_awaited()
+
+        await report(move)
+        clock[0] = 1107.0
+        await stop()
+
+        mock_casambi.setLevel.assert_awaited_once()
+        assert mock_casambi.setLevel.await_args.args[1] == expected
+
+        # Within the margin of the end the screen arrives anyway.
+        mock_casambi.setLevel.reset_mock()
+        await report(rest)
+        clock[0] = 1200.0
+        await report(move)
+        clock[0] = 1234.0
+        await stop()
+        mock_casambi.setLevel.assert_not_awaited()
+
+    # The toggle, which reverses a SO!, is never used on a screen.
+    mock_casambi.setControlValue.assert_not_awaited()
 
 
 async def test_environment_sensors(

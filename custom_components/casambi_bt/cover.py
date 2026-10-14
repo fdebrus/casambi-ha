@@ -6,6 +6,7 @@ from abc import ABCMeta
 from collections.abc import Callable
 from datetime import timedelta
 import logging
+import math
 from time import monotonic
 from typing import Any, Final
 
@@ -45,6 +46,11 @@ CASA_RAW_MAX: Final = 255
 TRAVEL_CHANNEL_EXTEND: Final = 1
 TRAVEL_CHANNEL_RETRACT: Final = 2
 DEFAULT_TRAVEL_MS: Final = 35000
+
+# A moving screen ignores a target behind it, so Stop aims this far ahead
+# of the estimated position (covers the estimate's error and the command
+# latency; 1.5 s is about 4 % of a 35 s travel).
+STOP_AHEAD_SECONDS: Final = 1.5
 
 # How often the estimated position of a moving screen is refreshed.
 MOTION_UPDATE_INTERVAL: Final = timedelta(seconds=1)
@@ -274,11 +280,14 @@ class CasambiScreenCover(CasambiMotorCover):
     full travel time the motor reports on its sensor channels (35 s), and
     the cover reports opening or closing until the estimate arrives.
 
-    The screen cannot be stopped mid-travel from Casambi: its onoff control
-    (``$toggle``) reverses the motion, a position sent seven seconds into a
-    close was acknowledged but the screen kept extending, and the Casambi
-    app's own stop reversed it too (SO! V4.1 captures). Stop is therefore
-    not offered.
+    Its onoff control (``$toggle``) reverses the motion, and the Casambi
+    app's own stop reverses it too. A new position sent while it moves is
+    only honoured when it lies ahead of the screen: position 52 sent 7.1 s
+    into a close (just behind it) was ignored and the screen kept
+    extending, position 65 sent 8.8 s in (ahead of it) stopped it there
+    (SO! V4.1 captures). Stop therefore sends the estimated position plus
+    a margin in the direction of travel, so the screen halts slightly past
+    the point where Stop was pressed.
     """
 
     _attr_device_class = CoverDeviceClass.SHADE
@@ -291,6 +300,7 @@ class CasambiScreenCover(CasambiMotorCover):
             CoverEntityFeature.OPEN
             | CoverEntityFeature.CLOSE
             | CoverEntityFeature.SET_POSITION
+            | CoverEntityFeature.STOP
         )
         self._travel_ms: dict[int, int] = {}
         self._target: int | None = None
@@ -373,6 +383,24 @@ class CasambiScreenCover(CasambiMotorCover):
         if self._cancel_tick is not None:
             self._cancel_tick()
             self._cancel_tick = None
+
+    async def async_stop_cover(self, **kwargs: Any) -> None:
+        """Stop the screen by sending a position just ahead of it.
+
+        The screen ignores a position behind it while it moves, so the
+        target is the estimated position plus a margin in the direction of
+        travel. Nothing is sent when the screen is at rest or would reach
+        its target within the margin anyway.
+        """
+        if not self._moving() or self._target is None:
+            return
+        extending = self._target > self._move_from
+        ahead = self._estimate(monotonic() + STOP_AHEAD_SECONDS)
+        if ahead is None or ahead == self._target:
+            return
+        position = math.ceil(ahead) if extending else math.floor(ahead)
+        position = min(max(position, 0), CASA_RAW_MAX)
+        await self._async_casa_command(self._api.casa.setLevel(self._obj, position))
 
     async def async_will_remove_from_hass(self) -> None:
         """Stop refreshing when the entity is removed."""
