@@ -55,7 +55,7 @@ which this integration uses):
 
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
-| Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27) | Cover (blind) with position + stop, plus one raw diagnostic sensor per channel |
+| Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27): Temperatuur °C, #Overcurrent, Travel Distance, Module State | Cover (blind) with position + stop, plus a temperature sensor and three diagnostic sensors |
 | Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position (estimated from the travel time while moving, with opening/closing), stop = clear the start/stop bit for a button run, SetLevel just ahead of the estimated position otherwise |
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (writes the ONOFF bit both ways; the library's `turnOn` sends `SetLevel ff05`, which the relay ignores) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
@@ -184,11 +184,25 @@ sensor is wired directly to the motor rather than onto the mesh is an open
 question for the installer.
 
 The Lamel itself declares four SENSOR controls and cycles through four
-channels in its state every ~4 s. Observed on that network: channel 1 rose
-from 17 to 30 over a sunny day (temperature-like), channels 2, 3 and 4 held
-0, 15 and 50. Each channel is exposed as a raw diagnostic sensor on the
-louvre device so they can be identified (e.g. by wetting the rain sensor
-and watching which channel reacts) before any semantics are attached.
+channels in its state every ~4 s. Casambi's fixture definition
+(`https://api.casambi.com/fixture/38915`) names them by tag, and the
+channel header is tag + 1:
+
+| Channel | Tag | Fixture name | Unit / range | Observed on this pergola |
+|---|---|---|---|---|
+| 1 | 0 | Temperatuur | °C, 0–255 | 26 → 14 over an evening, ~2 °C above outdoor at night |
+| 2 | 1 | #Overcurrent | counter | 0 |
+| 3 | 2 | Travel Distance | counter | 20 → 31, stepping with louvre movements |
+| 4 | 3 | Module State | 0–255 | 50 |
+
+The same definition lists the motor's configuration parameters (set in the
+Casambi app, not on the wire): Orientation (1 North … 8 North-West, this
+unit: North), Current Limit (5000 mA), Zero Motor, Sensor ID (7),
+Temperature Sensor Enable, Service Mode, Motor Direction (Left/Right) and
+Error Step Percentage (5 %). Its `strings` also carry the labels of the
+Intelligent variant's controls ($temp Cool/Warm, $auto, $intel,
+$control_dimmer Shadow/Sun). Negative temperatures are untested; the
+control is declared 0–255.
 
 ### Wired push buttons report on the input stream only
 

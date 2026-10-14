@@ -98,6 +98,18 @@
             "louvre_channel": {
                 "name": "Sensorkanaal {channel}"
             },
+            "louvre_module_state": {
+                "name": "Modulestatus"
+            },
+            "louvre_overcurrent": {
+                "name": "Overstroomgebeurtenissen"
+            },
+            "louvre_temperature": {
+                "name": "Temperatuur"
+            },
+            "louvre_travel_distance": {
+                "name": "Afgelegde afstand"
+            },
             "solar": {
                 "name": "Zonnestraling"
             },

@@ -13,14 +13,16 @@ https://github.com/superkikim/casambi-bt-hass fork:
 Additionally the platform reports lux (12 bit) and presence (2 bit) as
 first-class controls parsed into the unit state.
 
-Winsol louvre motors multiplex a few sensor channels of their own into
+Winsol louvre motors multiplex four sensor channels of their own into
 their 5-byte state (bits 0-3 select the channel, bits 4-27 carry its
-24-bit value). Their meaning is not decoded yet, so they are exposed as
-raw diagnostic sensors to be identified on real hardware.
+24-bit value). The Casambi fixture definition of the Winsol Lamel
+Standard V4.1 (fixture 38915) names them by tag, channel = tag + 1:
+Temperatuur (°C), #Overcurrent, Travel Distance and Module State.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
 from typing import Final
 
@@ -32,7 +34,12 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import LIGHT_LUX, EntityCategory, UnitOfSpeed
+from homeassistant.const import (
+    LIGHT_LUX,
+    EntityCategory,
+    UnitOfSpeed,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -55,6 +62,44 @@ PACKET_SOLAR: Final = 2
 # Louvre state layout: a 4-bit channel header followed by a 24-bit value.
 LOUVRE_HEADER_BITS: Final = 4
 LOUVRE_VALUE_BITS: Final = 24
+
+
+@dataclass(frozen=True, kw_only=True)
+class LouvreChannel:
+    """How one named sensor channel of a louvre motor is exposed."""
+
+    key: str
+    device_class: SensorDeviceClass | None = None
+    unit: str | None = None
+    state_class: SensorStateClass = SensorStateClass.MEASUREMENT
+    category: EntityCategory | None = EntityCategory.DIAGNOSTIC
+    icon: str | None = None
+
+
+# From the fixture definition (sensor tag = channel - 1). Confirmed on a
+# Winsol SO! Climate pergola: the temperature followed the outdoor
+# temperature (14 °C against 12.1 °C at night), Travel Distance rose with
+# every louvre movement (20 -> 31 in an evening), #Overcurrent stayed 0
+# and Module State read 50.
+LOUVRE_CHANNELS: Final[dict[int, LouvreChannel]] = {
+    1: LouvreChannel(
+        key="louvre_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        unit=UnitOfTemperature.CELSIUS,
+        category=None,
+    ),
+    2: LouvreChannel(
+        key="louvre_overcurrent",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:flash-alert",
+    ),
+    3: LouvreChannel(
+        key="louvre_travel_distance",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:counter",
+    ),
+    4: LouvreChannel(key="louvre_module_state", icon="mdi:state-machine"),
+}
 
 
 def decode_louvre_channel(raw: bytes | None) -> tuple[int, int] | None:
@@ -103,27 +148,37 @@ async def async_setup_entry(
 
 
 class CasambiLouvreChannelSensor(CasambiUnitEntity, SensorEntity):
-    """One raw multiplexed sensor channel of a louvre motor.
+    """One multiplexed sensor channel of a louvre motor.
 
     The motor rotates through its channels every few seconds; this entity
     keeps the last value seen for its own channel and ignores the others.
+    Known channels get their fixture name and meaning; any other channel
+    stays a raw diagnostic value.
     """
 
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_icon = "mdi:numeric"
-
     def __init__(self, api: CasambiApi, unit: Unit, channel: int) -> None:
-        """Initialize a raw channel sensor."""
+        """Initialize a channel sensor."""
+        spec = LOUVRE_CHANNELS.get(channel)
+        # The unique id keeps the channel number so history survives renames.
         desc = TypedSensorEntityDescription(
             key=unit.uuid,
             entity_type=f"channel-{channel}",
-            translation_key="louvre_channel",
+            translation_key=spec.key if spec else "louvre_channel",
         )
         self._obj: Unit
         super().__init__(api, desc, unit)
         self._channel = channel
-        self._attr_translation_placeholders = {"channel": str(channel)}
+        if spec is None:
+            self._attr_translation_placeholders = {"channel": str(channel)}
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+            self._attr_state_class = SensorStateClass.MEASUREMENT
+            self._attr_icon = "mdi:numeric"
+        else:
+            self._attr_device_class = spec.device_class
+            self._attr_native_unit_of_measurement = spec.unit
+            self._attr_state_class = spec.state_class
+            self._attr_entity_category = spec.category
+            self._attr_icon = spec.icon
         self._value: int | None = None
         self._decode()
 
