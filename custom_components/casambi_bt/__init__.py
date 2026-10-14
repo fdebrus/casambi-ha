@@ -171,7 +171,9 @@ class CasambiApi:
             self.hass,
             self._bluetooth_callback,
             {"address": self.address, "connectable": True},
-            bluetooth.BluetoothScanningMode.ACTIVE,
+            # Seeing the network's advertisements is enough to know it is
+            # back; no scan responses are needed.
+            bluetooth.BluetoothScanningMode.PASSIVE,
         )
 
     async def connect(self) -> None:

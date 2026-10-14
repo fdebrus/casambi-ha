@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 from time import monotonic
-from typing import Final
+from typing import Any, Final
 
 from CasambiBt import _client
 from CasambiBt._invocation import parse_invocation_stream
@@ -50,16 +50,20 @@ _INPUT_ONLY_EVENTS: Final = {
 class InputStreamSwitchEventDecoder(SwitchEventDecoder):
     """Switch event decoder that also serves input-stream-only units."""
 
-    def __init__(self, logger: logging.Logger | None = None) -> None:
-        """Initialize the decoder."""
-        super().__init__(logger)
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        """Initialize the decoder.
+
+        Arguments are passed through unchanged: casambi-bt builds the decoder
+        without arguments, casambi-bt-skk passes the client's logger.
+        """
+        super().__init__(*args, **kwargs)
         # Units seen on the 0x06 button stream; their 0x12 PRESS / RELEASE
         # stay ignored as in the library. Kept across reset() on purpose.
         self._button_stream_units: set[int] = set()
 
     def decode(self, data: bytes, packet_seq: int) -> list[SwitchEvent]:
         """Decode a type-7 packet, including input-only PRESS / RELEASE."""
-        frames = parse_invocation_stream(data, logger=self._logger)
+        frames = parse_invocation_stream(data)
         self._button_stream_units.update(
             frame.target >> 8
             for frame in frames

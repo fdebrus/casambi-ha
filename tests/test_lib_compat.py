@@ -1,4 +1,4 @@
-"""Contract tests against the real casambi-bt-skk library.
+"""Contract tests against the real casambi-bt library.
 
 Every other test in this suite mocks the library, so a renamed attribute or
 a method that stops being a coroutine would pass the whole suite and only

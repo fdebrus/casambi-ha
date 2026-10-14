@@ -8,11 +8,18 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.casambi_bt import async_remove_config_entry_device
 from custom_components.casambi_bt.const import DOMAIN
+from homeassistant.components.bluetooth import BluetoothScanningMode
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .conftest import LIGHT_UUID, NETWORK_ID, get_device, make_light_unit
+from .conftest import (
+    LIGHT_UUID,
+    NETWORK_ADDRESS,
+    NETWORK_ID,
+    get_device,
+    make_light_unit,
+)
 
 
 async def test_setup_and_unload(
@@ -137,6 +144,27 @@ async def test_remove_config_entry_device(
         await async_remove_config_entry_device(hass, mock_config_entry, stale_device)
         is True
     )
+
+
+async def test_network_watched_with_passive_scanning(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the network's advertisements are watched passively."""
+    with patch(
+        "homeassistant.components.bluetooth.async_register_callback",
+        return_value=lambda: None,
+    ) as register:
+        mock_config_entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+
+    register.assert_called_once()
+    _, _, matcher, mode = register.call_args.args
+    assert matcher == {"address": NETWORK_ADDRESS, "connectable": True}
+    assert mode is BluetoothScanningMode.PASSIVE
 
 
 async def test_unit_devices_link_to_network_device(

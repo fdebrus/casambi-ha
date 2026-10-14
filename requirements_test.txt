@@ -3,7 +3,7 @@ pytest-homeassistant-custom-component==0.13.316
 mypy==2.3.0
 
 # Integration requirement
-casambi-bt-skk==0.4.0b2.post10
+casambi-bt==0.4.0b5
 
 # Dependencies of the bluetooth component that the harness does not install
 aiousbwatcher

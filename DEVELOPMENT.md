@@ -50,7 +50,8 @@ Most of this is ported from upstream `dev`; see `tests/test_reconnect.py`.
 
 Based on real fixture definitions and on protocol work by the
 [superkikim/casambi-bt-hass](https://github.com/superkikim/casambi-bt-hass)
-fork (whose enhanced `casambi-bt-skk` library this integration uses):
+fork (whose library work has since been merged into upstream `casambi-bt`,
+which this integration uses):
 
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
@@ -239,9 +240,12 @@ For `casambi-bt` also run `mypy .`. All of these tools should be available when 
 
 ### Supporting several Home Assistant versions
 
-The test requirements pin the oldest supported core (2026.2). Two helpers
-changed in newer cores and the integration adapts at import time rather than
-raising the minimum version:
+The minimum supported core is 2026.6, the first to ship bleak 3, which
+`casambi-bt` 0.4.0b4 and later require (`hacs.json` enforces it). The test
+requirements still pin the 2026.2.3 harness, the last one installable on
+Python 3.13 as used by CI; pip pulls bleak 3 into it for the library, so the
+suite runs fine there. Two helpers changed in newer cores and the integration
+adapts at import time rather than raising the minimum version further:
 
 - `homeassistant.helpers.sun.get_astral_observer` replaces
   `get_astral_location` (removed in 2027.7) — `suntrack.py` uses whichever
