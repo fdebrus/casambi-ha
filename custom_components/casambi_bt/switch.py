@@ -454,7 +454,9 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         await self._async_casa_command(self._api.casa.setSlider(unit, 0))
 
     async def _async_retract_screen(self, unit: Unit) -> None:
-        await self._async_casa_command(self._api.casa.setLevel(unit, CASA_RAW_MAX))
+        # Retracted is raw 0 on the Winsol SO!: the dimmer counts how far
+        # the screen is extended, not how open it is.
+        await self._async_casa_command(self._api.casa.setLevel(unit, 0))
 
 
 class CasambiDemoToggle(CasambiBroadcastUnitEntity, SwitchEntity):

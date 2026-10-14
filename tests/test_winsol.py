@@ -127,8 +127,9 @@ async def test_screen_cover(
     )
     state = hass.states.get(entity_id)
     assert state is not None
-    # dimmer 64 of 255 -> 25%
-    assert state.attributes[ATTR_CURRENT_POSITION] == 25
+    # The dimmer counts how far the screen is extended, so it is inverted
+    # against the Home Assistant position: dimmer 64 of 255 -> 75% open.
+    assert state.attributes[ATTR_CURRENT_POSITION] == 75
 
     await hass.services.async_call(
         COVER_DOMAIN,
@@ -140,7 +141,8 @@ async def test_screen_cover(
     target, value = mock_casambi.setLevel.await_args.args
     assert isinstance(target, Unit)
     assert target.uuid == WINSOL_SCREEN_UUID
-    assert value == 204
+    # 80% open -> 20% extended -> raw 51.
+    assert value == 51
 
 
 async def test_environment_sensors(

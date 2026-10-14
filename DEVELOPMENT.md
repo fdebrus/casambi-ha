@@ -63,28 +63,40 @@ The rotating sensor packets are accumulated by the library in
 1 = wind (raw/4), 2 = solar (raw/4), 3 = PIR. Unit classification lives in
 `classify.py`.
 
-### Open question: is the screen position inverted?
+### Screen position is inverted — confirmed
 
-`CasambiScreenCover` maps the dimmer straight through — HA position 100
-(open) writes raw 255, position 0 (closed) writes raw 0. The
-[superkikim](https://github.com/superkikim/casambi-bt-hass) fork, which
-runs nine Winsol SO! V4.1 shutters on a live installation, documents the
-opposite convention: **raw 0 = open, raw 255 = closed**, and inverts in
-both directions (`100 - dimmer * 100 // 255` on read, `(100 - position) *
-255 // 100` on write).
+The SO! screen's dimmer counts how far the screen is *extended*: raw 0 is
+fully retracted (open), raw 255 fully extended (closed) — the opposite of
+Home Assistant's cover position, where 100 is open. `CasambiScreenCover`
+inverts in both directions (`100 - dimmer * 100 / 255` on read,
+`(100 - position) * 255 / 100` on write), and the weather protection
+retracts a screen by writing raw 0.
 
-If that holds for this hardware too, our screen entity is inverted: asking
-it to close would open the screen. It is deliberately left as-is until it
-can be checked against a real unit — flipping it on someone else's report
-risks breaking the case that works. **This is the first thing to verify
-when hardware arrives**; the fix is three lines in `cover.py` plus the
-matching test in `tests/test_cover.py`.
+This was first reported by the
+[superkikim](https://github.com/superkikim/casambi-bt-hass) fork from a
+nine-shutter installation, and confirmed here on a Winsol SO! Climate
+pergola with three SO! V4.1 screens: before the inversion, *open* extended
+the screen and *close* retracted it.
 
-Note that the same fork also reports the Lamel as `EXT/1ch/Dim` with
-DIMMER + SLIDER, where the fixture definition used here has the Lamel
-Standard as `EXT/Elements` with SLIDER + ONOFF — so fixture layouts do
-vary between Winsol products and firmware revisions, and neither
-observation automatically generalises.
+The louvre slider (0–142°) is a different mechanism and has **not** been
+checked for direction yet.
+
+### Real-world network layout
+
+For reference, a Winsol SO! Climate pergola commissioned in 2026 exposed
+nine units: three `SO! V4.1` screens (`EXT/1ch/Dim`, 5-byte state, DIMMER
+bits 28–35 + ONOFF bit 36), one `Winsol Lamel Standard V4.1 TA16`
+(`EXT/Elements`, 5-byte state, SLIDER bits 28–35 with max 142 + ONOFF bit
+36 — the layout this integration was built on, with no native automation
+controls), one `Winsol Mono` dimmer for the spots (`PWM/1ch/Dim`), one
+`Winsol On-Off` relay (`EXT/Elements`, a single ONOFF), one
+`24VDC_4CH_PB_Winsol` push-button interface (mode `PushButton`, one
+read-only 8-bit UNKNOWN control — the source of the wall-switch events),
+and two `Repeater` units (mode `Sensor`, one UNKNOWN control). **No sensor
+platform was present**, so the weather entities and the weather
+protection switch do not appear on such a network; whether the pack's rain
+sensor is wired directly to the motor rather than onto the mesh is an open
+question for the installer.
 
 ### Winsol Lamel Intelligent (Star) — decoded, not implemented
 

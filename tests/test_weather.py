@@ -112,7 +112,8 @@ async def test_weather_protection_rain_and_wind(
     mock_casambi.setLevel.assert_awaited_once()
     screen_target, screen_raw = mock_casambi.setLevel.await_args.args
     assert screen_target.uuid == WINSOL_SCREEN_UUID
-    assert screen_raw == 255
+    # Retracted is raw 0: the dimmer measures how far the screen is out.
+    assert screen_raw == 0
     mock_casambi.setLevel.reset_mock()
 
     # Rain starts: louvres close and sun tracking is paused.

@@ -51,17 +51,17 @@ Units are classified automatically by their control layout (`classify.py`) — m
 | Lights / LED (dimmer, RGB(W), tunable white, XY) | `light` entities, plus group lights |
 | Casambi scenes | `scene` entities |
 | **Winsol louvre motor** (Lamel) | `cover` (blind) with position 0–100% (= 0–142°) and **Stop**, plus the automation entities below |
-| **Winsol SO! screen** | `cover` (shade) with position and Stop — see the direction caveat below |
+| **Winsol SO! screen** | `cover` (shade) with position and Stop |
 | **Sensor Platform V4** (weather option) | `sensor`: wind speed (km/h), solar radiation, illuminance (lx); `binary_sensor`: rain, motion, presence; `switch`: per-element enables (wind/rain/light/motion) |
 | Wall switches / remotes (e.g. Xpress) | `event` entities per button (created on first press) + bus events |
 | Network | `binary_sensor` connectivity status |
 
-> [!CAUTION]
-> **The screen's open/close direction is unverified.** Another Winsol
-> installation reports that Casambi treats raw 0 as *open* and 255 as
-> *closed* for the SO! screen — the opposite of what this integration
-> assumes. If your screen extends when you ask it to open, that is why;
-> see `DEVELOPMENT.md` for the details and the fix.
+> [!NOTE]
+> **Screen direction.** Casambi counts how far a Winsol SO! screen is
+> *extended* (raw 0 = fully retracted, 255 = fully extended), the opposite
+> of Home Assistant's cover position. The integration inverts this, so
+> **open** retracts the screen and **close** extends it. Confirmed on SO!
+> V4.1 hardware.
 
 ## Demo mode
 
