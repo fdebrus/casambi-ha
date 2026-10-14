@@ -1,6 +1,7 @@
 """Fixtures for the Casambi Bluetooth integration tests."""
 
 from collections.abc import Generator
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from CasambiBt import (
@@ -22,6 +23,7 @@ from custom_components.casambi_bt.const import (
     DOMAIN,
 )
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
+from homeassistant.helpers.device_registry import DeviceEntry, DeviceRegistry
 
 NETWORK_ADDRESS = "AA:BB:CC:DD:EE:FF"
 NETWORK_ID = "abcdef123456"
@@ -39,6 +41,20 @@ SENSOR_PLATFORM_UUID = "unit-sensor-platform-uuid"
 def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
     """Enable loading custom integrations in all tests."""
     return
+
+
+def get_device(
+    registry: DeviceRegistry, identifier: tuple[str, str], entry_id: str
+) -> DeviceEntry | None:
+    """Look up a device by identifier on any supported core.
+
+    Newer cores scope the lookup to the config entry and deprecate the
+    unscoped `async_get_device`; older cores only have the latter.
+    """
+    by_identifier = getattr(registry, "async_get_device_by_identifier", None)
+    if by_identifier is not None:
+        return cast("DeviceEntry | None", by_identifier(identifier, entry_id))
+    return registry.async_get_device({identifier})
 
 
 def _make_unit(

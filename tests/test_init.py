@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from CasambiBt.errors import AuthenticationError
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.casambi_bt import async_remove_config_entry_device
@@ -11,7 +12,7 @@ from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .conftest import LIGHT_UUID, NETWORK_ID, make_light_unit
+from .conftest import LIGHT_UUID, NETWORK_ID, get_device, make_light_unit
 
 
 async def test_setup_and_unload(
@@ -111,15 +112,16 @@ async def test_remove_config_entry_device(
     await hass.async_block_till_done()
 
     registry = dr.async_get(hass)
+    entry_id = mock_config_entry.entry_id
 
-    network_device = registry.async_get_device({(DOMAIN, NETWORK_ID)})
+    network_device = get_device(registry, (DOMAIN, NETWORK_ID), entry_id)
     assert network_device is not None
     assert (
         await async_remove_config_entry_device(hass, mock_config_entry, network_device)
         is False
     )
 
-    unit_device = registry.async_get_device({(DOMAIN, LIGHT_UUID)})
+    unit_device = get_device(registry, (DOMAIN, LIGHT_UUID), entry_id)
     assert unit_device is not None
     assert (
         await async_remove_config_entry_device(hass, mock_config_entry, unit_device)
@@ -135,6 +137,31 @@ async def test_remove_config_entry_device(
         await async_remove_config_entry_device(hass, mock_config_entry, stale_device)
         is True
     )
+
+
+async def test_unit_devices_link_to_network_device(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that unit devices hang off the network device without deprecations."""
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    registry = dr.async_get(hass)
+    entry_id = mock_config_entry.entry_id
+    network_device = get_device(registry, (DOMAIN, NETWORK_ID), entry_id)
+    assert network_device is not None
+    assert mock_config_entry.runtime_data.network_device_id == network_device.id
+
+    unit_device = get_device(registry, (DOMAIN, LIGHT_UUID), entry_id)
+    assert unit_device is not None
+    assert unit_device.via_device_id == network_device.id
+
+    assert "deprecated `via_device`" not in caplog.text
 
 
 async def test_binary_sensor_reflects_connection(

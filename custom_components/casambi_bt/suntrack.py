@@ -17,18 +17,27 @@ from __future__ import annotations
 
 from math import atan2, cos, degrees, radians, tan
 
+from astral.sun import azimuth as solar_azimuth, elevation as solar_elevation
+
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.sun import get_astral_location
+from homeassistant.helpers import sun as sun_helpers
 from homeassistant.util import dt as dt_util
 
 # Hardware range of the louvre slider in degrees (Winsol Lamel: 0-142).
 LOUVRE_MAX_ANGLE = 142.0
 
+# Newer cores provide an astral observer and deprecate get_astral_location
+# (removed in 2027.7); older cores only have the latter.
+_get_astral_observer = getattr(sun_helpers, "get_astral_observer", None)
+
 
 def get_sun_position(hass: HomeAssistant) -> tuple[float, float]:
     """Return the current solar (elevation, azimuth) in degrees."""
-    location, elevation = get_astral_location(hass)
     now = dt_util.utcnow()
+    if _get_astral_observer is not None:
+        observer = _get_astral_observer(hass)
+        return solar_elevation(observer, now), solar_azimuth(observer, now)
+    location, elevation = sun_helpers.get_astral_location(hass)
     return (
         location.solar_elevation(now, elevation),
         location.solar_azimuth(now, elevation),

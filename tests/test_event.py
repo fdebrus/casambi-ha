@@ -4,6 +4,7 @@ from collections.abc import Callable
 from unittest.mock import MagicMock
 
 from CasambiBt._switch import ButtonEventType, SwitchEvent
+import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
     async_capture_events,
@@ -11,9 +12,9 @@ from pytest_homeassistant_custom_component.common import (
 
 from custom_components.casambi_bt.const import DOMAIN, EVENT_BUTTON
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .conftest import NETWORK_ID
+from .conftest import LIGHT_UUID, NETWORK_ID, get_device
 
 
 def _make_switch_event(
@@ -94,6 +95,46 @@ async def test_button_event_creates_entity(
     state = hass.states.get(entity_id)
     assert state is not None
     assert state.attributes["event_type"] == "hold"
+
+
+async def test_button_entity_device_links_to_network(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that a button of a known unit lands on that unit's device."""
+    await _setup(hass, mock_config_entry)
+
+    # Unit 1 is the test light; unit 42 is unknown to the network.
+    handler = _get_switch_handler(mock_casambi)
+    handler(_make_switch_event(1, 1, ButtonEventType.PRESS))
+    handler(_make_switch_event(1, 42, ButtonEventType.PRESS))
+    await hass.async_block_till_done()
+
+    registry = er.async_get(hass)
+    devices = dr.async_get(hass)
+    entry_id = mock_config_entry.entry_id
+    network_device = get_device(devices, (DOMAIN, NETWORK_ID), entry_id)
+    assert network_device is not None
+
+    known = registry.async_get(
+        registry.async_get_entity_id("event", DOMAIN, f"{NETWORK_ID}-switch-1-1") or ""
+    )
+    assert known is not None and known.device_id is not None
+    unit_device = devices.async_get(known.device_id)
+    assert unit_device is not None
+    assert (DOMAIN, LIGHT_UUID) in unit_device.identifiers
+    assert unit_device.via_device_id == network_device.id
+
+    unknown = registry.async_get(
+        registry.async_get_entity_id("event", DOMAIN, f"{NETWORK_ID}-switch-42-1") or ""
+    )
+    assert unknown is not None
+    assert unknown.device_id == network_device.id
+
+    assert "deprecated `via_device`" not in caplog.text
 
 
 async def test_button_entity_restored_from_registry(
