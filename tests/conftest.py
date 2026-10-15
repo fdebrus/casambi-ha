@@ -293,6 +293,11 @@ def mock_casambi() -> Generator[MagicMock]:
     casa.turnOn = AsyncMock()
     casa.switchToScene = AsyncMock()
     casa.connected = True
+
+    async def _reconnect(_device: object) -> None:
+        casa.connected = True
+
+    casa.reconnect = AsyncMock(side_effect=_reconnect)
     casa.networkId = NETWORK_ID
     casa.networkName = NETWORK_NAME
 

@@ -279,6 +279,11 @@ class CasambiApi:
         warned = False
         reason = ""
 
+        # The task starts eagerly, inside the library's disconnect callback,
+        # where the library still reports itself connected and would return
+        # from reconnect() at once. Let it finish tearing down first.
+        await asyncio.sleep(0)
+
         while True:
             try:
                 device = bluetooth.async_ble_device_from_address(
@@ -288,6 +293,10 @@ class CasambiApi:
                     raise BluetoothDeviceNotFoundError  # noqa: TRY301
 
                 await self._casa.reconnect(device)
+                if not self._casa.connected:
+                    raise BluetoothError(  # noqa: TRY301
+                        "reconnect returned without a connection"
+                    )
             except BluetoothError as err:
                 _LOGGER.debug(
                     "Connecting failed due to bluetooth error. Retrying",
