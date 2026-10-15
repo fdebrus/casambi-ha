@@ -245,7 +245,11 @@ pergola heating and is exposed as a `switch`), one
 `24VDC_4CH_PB_Winsol` push-button interface (mode `PushButton`, one
 read-only 8-bit UNKNOWN control — the source of the wall-switch events, see
 below),
-and two `Repeater` units (mode `Sensor`, one UNKNOWN control). **No sensor
+and two `Repeater` units (mode `Sensor`). The repeater fixture (15248,
+LEDsGO) declares a single 1-bit `placeholder` control and no parameters:
+it only extends the mesh. Its `hasPresenceSensor`/`hasLightSensor` flags
+(`maxLux` 1000) belong to the generic sensor module it is built on; it
+reports no readings (its state stays `00`), so it gets no entities. **No sensor
 platform was present**, so the pergola has no weather sensing of its own:
 weather protection runs on Home Assistant entities chosen in the options
 (here a nearby Netatmo station's rain gauge, anemometer and thermometer).
