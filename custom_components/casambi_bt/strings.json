@@ -24,12 +24,6 @@
           "import_groups": "Import groups?",
           "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
         }
-      },
-      "user": {
-        "menu_options": {
-          "network": "Connect to a Casambi network",
-          "demo": "Demo (no hardware needed)"
-        }
       }
     },
     "error": {
@@ -86,9 +80,6 @@
       }
     },
     "number": {
-      "demo_wind": {
-        "name": "Simulated wind"
-      },
       "sun_offset": {
         "name": "Sun offset"
       },
@@ -126,12 +117,6 @@
       }
     },
     "switch": {
-      "demo_presence": {
-        "name": "Simulate presence"
-      },
-      "demo_rain": {
-        "name": "Simulate rain"
-      },
       "frost_lock": {
         "name": "Frost lock"
       },

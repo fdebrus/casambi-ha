@@ -26,7 +26,6 @@ from homeassistant.helpers.httpx_client import get_async_client
 
 from . import get_cache_dir
 from .const import (
-    CONF_DEMO,
     CONF_FROST_LOCK_TEMPERATURE,
     CONF_IMPORT_GROUPS,
     CONF_LOUVRE_AZIMUTH,
@@ -41,7 +40,6 @@ from .const import (
     DOMAIN,
     entry_option,
 )
-from .demo import DEMO_ADDRESS, DEMO_NETWORK_ID, DEMO_NETWORK_NAME
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -241,30 +239,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Offer connecting to a real network or setting up the demo."""
-        if user_input is None and self.discovery_info is None:
-            return self.async_show_menu(
-                step_id="user", menu_options=["network", "demo"]
-            )
+        """Handle a flow started by the user."""
         return await self.async_step_network(user_input)
-
-    async def async_step_demo(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Set up a simulated network that needs no hardware."""
-        await self.async_set_unique_id(DEMO_NETWORK_ID)
-        self._abort_if_unique_id_configured()
-
-        return self.async_create_entry(
-            title=DEMO_NETWORK_NAME,
-            data={
-                CONF_DEMO: True,
-                CONF_ADDRESS: DEMO_ADDRESS,
-                CONF_PASSWORD: "",
-                CONF_IMPORT_GROUPS: True,
-                CONF_VERTICAL_AS_COVER: False,
-            },
-        )
 
     async def async_step_network(
         self, user_input: dict[str, Any] | None = None

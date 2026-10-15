@@ -55,9 +55,7 @@ lists every unit's name and control layout, so you can compare.
 
 1. Add this repository as a custom repository in HACS, download, restart HA.
 2. The network is **discovered automatically** when it advertises — accept the discovered entry, or add manually via *Settings → Devices & services → Add integration → Casambi Bluetooth*.
-3. Adding it manually offers two choices:
-   - **Connect to a Casambi network** — the real thing; only the **network password** needs to be typed, the Bluetooth address is pre-filled by discovery.
-   - **Demo (no hardware needed)** — see below.
+3. Only the **network password** needs to be typed; the Bluetooth address is pre-filled by discovery.
 
 All later settings live behind the integration's **Configure** button:
 
@@ -112,22 +110,6 @@ Units are classified automatically by their control layout (`classify.py`) — m
 > second. A wall-button stop after 5.8 s was estimated at raw 42; the
 > screen reported 42.
 
-## Demo mode
-
-Demo mode simulates a complete pergola so the integration can be tried **without any hardware, Bluetooth adapter or Casambi network** — useful for building dashboards and testing automations before the pergola is installed.
-
-Add the integration and pick **Demo (no hardware needed)**. It creates a network with a louvre motor, a screen, a weather sensor platform, two lights, a heating relay, a light group and two scenes, built from the real Winsol fixture definitions. Covers move, lights dim and the sun tracking, temperature control and weather protection all work exactly as they do on real hardware.
-
-Three extra config entities drive the simulation, so the automations can be tested deterministically:
-
-| Entity | Effect |
-|---|---|
-| **Simulate rain** | Feeds the rain sensor — turn it on to watch weather protection close the louvres |
-| **Simulated wind** | Feeds the wind speed sensor — raise it past the threshold to watch the screen retract |
-| **Simulate presence** | Feeds the presence and motion sensors |
-
-Illuminance and solar radiation follow the real solar position for your HA location, refreshed every five minutes. Only one demo network can be added, and it can be deleted like any other entry.
-
 ## Louvre intelligence
 
 Each louvre device carries three automation layers, from lowest to highest priority — **sun < temperature < weather**:
@@ -175,25 +157,6 @@ actions:
 ```
 
 Watch events live under *Developer Tools → Events → `casambi_bt_button_event`*.
-
-## Blueprints
-
-Three automation blueprints ship with the integration, in
-`blueprints/automation/casambi_bt/`. They need **Home Assistant 2026.7 or
-newer** (they use the `event.received` trigger) and are imported via
-*Settings → Automations & scenes → Blueprints → Import blueprint*, pasting
-the file's GitHub URL.
-
-| Blueprint | What it does |
-|---|---|
-| **Casambi button — custom actions** | Runs your own actions on press / short press / hold / release |
-| **Casambi button — pergola cover** | Short press toggles a louvre or screen open/closed, holding stops it mid-travel |
-| **Casambi button — toggle and dim** | Short press toggles a light, holding dims it until you let go |
-
-All three pick the button from a filtered entity picker, so no unit IDs or
-device IDs are involved. Note that a long press sends `press` first and
-`hold` only afterwards — put toggles on **short press** (which fires on
-release without a hold) if you want short and long to be exclusive.
 
 ## Example automations
 

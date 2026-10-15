@@ -36,7 +36,6 @@ from homeassistant.helpers.httpx_client import get_async_client
 from . import switch_decoder
 from .classify import UnitKind, classify_unit
 from .const import (
-    CONF_DEMO,
     CONF_FROST_LOCK_TEMPERATURE,
     CONF_TEMPERATURE_ENTITY,
     DEFAULT_FROST_LOCK_TEMPERATURE,
@@ -50,7 +49,6 @@ from .const import (
     RECONNECT_WARN_AFTER,
     entry_option,
 )
-from .demo import DemoCasambi
 
 _LOGGER: Final = logging.getLogger(__name__)
 
@@ -68,7 +66,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
         entry,
         entry.data.get(CONF_ADDRESS, ""),
         entry.data.get(CONF_PASSWORD, ""),
-        demo=entry.data.get(CONF_DEMO, False),
     )
     await api.connect()
     entry.runtime_data = api
@@ -79,9 +76,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
     network_device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, api.casa.networkId)},
-        connections=(set() if api.demo else {(dr.CONNECTION_BLUETOOTH, api.address)}),
+        connections={(dr.CONNECTION_BLUETOOTH, api.address)},
         manufacturer="Casambi",
-        model="Demo network" if api.demo else "Network",
+        model="Network",
         name=api.casa.networkName,
     )
     api.network_device_id = network_device.id
@@ -180,7 +177,6 @@ class CasambiApi:
         conf_entry: CasambiConfigEntry,
         address: str,
         password: str,
-        demo: bool = False,
     ) -> None:
         """Initialize a Casambi API."""
 
@@ -188,18 +184,10 @@ class CasambiApi:
         self.conf_entry = conf_entry
         self.address = address
         self.password = password
-        self.demo = demo
-        if demo:
-            # The demo network implements the parts of the library API that
-            # the integration uses, so the rest of the code is unchanged.
-            # It never disconnects, so it needs no reconnect proxy.
-            self._casa = cast("Casambi", DemoCasambi(hass))
-            self.casa = self._casa
-        else:
-            self._casa = Casambi(get_async_client(hass), get_cache_dir(hass))
-            # Entities talk to the network through the proxy so that a
-            # write failing on bluetooth also triggers a reconnect.
-            self.casa = cast("Casambi", CasambiProxy(self, self._casa))
+        self._casa = Casambi(get_async_client(hass), get_cache_dir(hass))
+        # Entities talk to the network through the proxy so that a write
+        # failing on bluetooth also triggers a reconnect.
+        self.casa = cast("Casambi", CasambiProxy(self, self._casa))
 
         self._callback_map: dict[int, list[Callable[[Unit], None]]] = {}
         self._switch_event_callbacks: list[Callable[[SwitchEvent], None]] = []
@@ -237,16 +225,6 @@ class CasambiApi:
 
     async def connect(self) -> None:
         """Connect to the Casmabi network."""
-        if self.demo:
-            demo = cast("DemoCasambi", self._casa)
-            demo.registerUnitChangedHandler(self._unit_changed_handler)
-            demo.registerSwitchEventHandler(self._switch_event_handler)
-            self._handlers_registered = True
-            await demo.connect()
-            self._link_up = True
-            self._check_network_changes()
-            return
-
         try:
             device = bluetooth.async_ble_device_from_address(
                 self.hass, self.address, connectable=True
@@ -467,9 +445,7 @@ class CasambiApi:
 
         # This needs to happen before we disconnect.
         # We don't want to be informed about disconnects initiated by us.
-        # The demo network never disconnects on its own, so no disconnect
-        # callback was registered for it.
-        if self._handlers_registered and not self.demo:
+        if self._handlers_registered:
             self._casa.unregisterDisconnectCallback(self._casa_disconnect)
 
         try:
