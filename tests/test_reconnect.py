@@ -304,3 +304,85 @@ async def test_entities_follow_the_connection_state(
 
     assert hass.states.get(status).state == "off"
     assert hass.states.get(light).state == "unavailable"
+
+
+async def test_status_goes_off_while_the_library_still_reports_connected(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the status when the library calls back before updating its state.
+
+    The library runs the disconnect callbacks while it still considers
+    itself authenticated and only clears that afterwards, so the status
+    must not be read from it at that moment.
+    """
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    status = next(
+        s.entity_id
+        for s in hass.states.async_all("binary_sensor")
+        if "status" in s.entity_id
+    )
+
+    started = asyncio.Event()
+
+    async def _hang(_device: object) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    mock_casambi.reconnect.side_effect = _hang
+
+    assert mock_casambi.connected is True
+    disconnect()
+    mock_casambi.connected = False
+    async with asyncio.timeout(5):
+        await started.wait()
+
+    assert hass.states.get(status).state == "off"
+    assert not mock_config_entry.runtime_data.available
+
+
+async def test_long_outage_is_logged(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that a reconnect failing for minutes is reported, and its end."""
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    status = next(
+        s.entity_id
+        for s in hass.states.async_all("binary_sensor")
+        if "status" in s.entity_id
+    )
+    mock_casambi.connected = False
+
+    def _reconnected(_device: object) -> None:
+        mock_casambi.connected = True
+
+    mock_casambi.reconnect.side_effect = _reconnected
+
+    with (
+        patch("custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "homeassistant.components.bluetooth.async_ble_device_from_address",
+            side_effect=[None, mock_bluetooth],
+        ),
+        patch(
+            "custom_components.casambi_bt.monotonic",
+            side_effect=[0.0, 400.0, 400.0, 460.0],
+        ),
+    ):
+        disconnect()
+        await hass.async_block_till_done()
+
+    assert (
+        "has been unreachable for 6 minutes (no Bluetooth adapter or proxy in "
+        "range sees it); still retrying" in caplog.text
+    )
+    assert "is reachable again after 7 minutes" in caplog.text
+    assert hass.states.get(status).state == "on"

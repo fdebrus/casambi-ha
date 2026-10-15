@@ -8,6 +8,7 @@ import contextlib
 import inspect
 import logging
 from pathlib import Path
+from time import monotonic
 from typing import Any, Final, cast
 
 from CasambiBt import Casambi, Group, Scene, Unit, UnitControlType
@@ -46,6 +47,7 @@ from .const import (
     RECONNECT_BACKOFF_NO_DEVICE,
     RECONNECT_BACKOFF_START,
     RECONNECT_BACKOFF_STEP,
+    RECONNECT_WARN_AFTER,
     entry_option,
 )
 from .demo import DemoCasambi
@@ -216,6 +218,10 @@ class CasambiApi:
         self.network_device_id: str | None = None
         self._cancel_bluetooth_callback: Callable[[], None] | None = None
         self._reconnect_task: asyncio.Task[None] | None = None
+        # Whether the link is up as far as the integration knows. The
+        # library still reports itself connected while it runs the
+        # disconnect callbacks, so its own flag can't be read there.
+        self._link_up = False
         self._handlers_registered = False
         self._unit_snapshot: frozenset[str] | None = None
 
@@ -237,6 +243,7 @@ class CasambiApi:
             demo.registerSwitchEventHandler(self._switch_event_handler)
             self._handlers_registered = True
             await demo.connect()
+            self._link_up = True
             self._check_network_changes()
             return
 
@@ -257,6 +264,7 @@ class CasambiApi:
                 self._handlers_registered = True
 
             await self._casa.connect(device, self.password)
+            self._link_up = True
             self._check_network_changes()
         except (BluetoothDeviceNotFoundError, NetworkNotFoundError) as err:
             raise ConfigEntryNotReady(
@@ -289,6 +297,9 @@ class CasambiApi:
         """
         backoff = RECONNECT_BACKOFF_START
         protocol_error = False
+        started = monotonic()
+        warned = False
+        reason = ""
 
         while True:
             try:
@@ -299,16 +310,18 @@ class CasambiApi:
                     raise BluetoothDeviceNotFoundError  # noqa: TRY301
 
                 await self._casa.reconnect(device)
-            except BluetoothError:
+            except BluetoothError as err:
                 _LOGGER.debug(
                     "Connecting failed due to bluetooth error. Retrying",
                     exc_info=True,
                 )
+                reason = f"Bluetooth error: {err}"
             except BluetoothDeviceNotFoundError:
                 # Home Assistant reports the device as out of range. We stay
                 # registered for bluetooth callbacks, so retrying rarely is
                 # enough to recover if that notification never arrives.
                 backoff = max(backoff, RECONNECT_BACKOFF_NO_DEVICE)
+                reason = "no Bluetooth adapter or proxy in range sees it"
             except ProtocolError:
                 # Retry once to see whether the error is permanent.
                 if protocol_error:
@@ -339,13 +352,31 @@ class CasambiApi:
                 )
                 return
             else:
-                _LOGGER.info(
-                    "Connection to the Casambi network %s was re-established",
-                    self.address,
-                )
+                if warned:
+                    _LOGGER.warning(
+                        "The Casambi network %s is reachable again after %d minutes",
+                        self.address,
+                        (monotonic() - started) // 60,
+                    )
+                else:
+                    _LOGGER.info(
+                        "Connection to the Casambi network %s was re-established",
+                        self.address,
+                    )
+                self._link_up = True
                 self._check_network_changes()
                 self._notify_connection_state()
                 return
+
+            if not warned and monotonic() - started >= RECONNECT_WARN_AFTER:
+                warned = True
+                _LOGGER.warning(
+                    "The Casambi network %s has been unreachable for %d minutes "
+                    "(%s); still retrying",
+                    self.address,
+                    (monotonic() - started) // 60,
+                    reason or "connection failed",
+                )
 
             await asyncio.sleep(backoff)
             backoff = min(RECONNECT_BACKOFF_MAX, backoff * RECONNECT_BACKOFF_STEP)
@@ -372,7 +403,7 @@ class CasambiApi:
     @property
     def available(self) -> bool:
         """Return True if the controller is available."""
-        return self._casa.connected
+        return self._link_up and self._casa.connected
 
     def frost_lock_temperature(self, unit: Unit) -> float | None:
         """Return the temperature that locks a louvre against frost, or None.
@@ -428,6 +459,7 @@ class CasambiApi:
     async def disconnect(self) -> None:
         """Disconnects from the controller and disables automatic reconnect."""
         await self._cancel_reconnect()
+        self._link_up = False
 
         if self._cancel_bluetooth_callback is not None:
             self._cancel_bluetooth_callback()
@@ -468,6 +500,7 @@ class CasambiApi:
 
     @callback
     def _casa_disconnect(self) -> None:
+        self._link_up = False
         self._notify_connection_state()
         self._schedule_reconnect()
 
@@ -563,7 +596,7 @@ class CasambiApi:
         service_info: bluetooth.BluetoothServiceInfoBleak,
         _change: bluetooth.BluetoothChange,
     ) -> None:
-        if not self._casa.connected and service_info.connectable:
+        if not self.available and service_info.connectable:
             self._schedule_reconnect()
 
 
