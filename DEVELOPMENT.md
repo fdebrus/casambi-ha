@@ -1,6 +1,6 @@
 # Development
 
-This document explain the recommended development workflow as well as a possible setup for development. This workflow includes both the integration (this repository) as well as the interfacing library [casambi-bt](https://github.com/lkempf/casambi-bt).
+This document explains how the fork is built and tested, what has been decoded about the Winsol pergola, and a possible setup for development. The integration talks to the network through the [casambi-bt](https://github.com/lkempf/casambi-bt) library.
 
 ## Architecture
 
@@ -25,8 +25,7 @@ operation, not an error.
   `RECONNECT_BACKOFF_START` (2 s) and doubles up to
   `RECONNECT_BACKOFF_MAX` (5 min). When Home Assistant reports the device
   as out of range the delay jumps to `RECONNECT_BACKOFF_NO_DEVICE` (60 s)
-  at once — retrying faster cannot help, and the bluetooth callback will
-  wake us as soon as the network advertises again.
+  at once — retrying faster cannot help.
 * **Failures that retrying cannot fix.** A `ProtocolError` is retried once
   and then abandoned; an `AuthenticationError` (the network password was
   changed) starts a reauth flow instead of looping.
@@ -38,13 +37,50 @@ operation, not an error.
   rather than silently doing nothing.
 * **Entities follow the connection.** `CasambiApi` fans out connection
   state changes to entities (`register_connection_updates`), so the
-  connectivity binary sensor and every entity's availability update the
-  moment the link drops or comes back, instead of waiting for the next
-  pushed unit state.
+  **Status** binary sensor and every entity's availability update the
+  moment the link drops or comes back.
+* **Long outages are logged.** After `RECONNECT_WARN_AFTER` (5 min) of
+  failed attempts a single warning names the last reason (*no Bluetooth
+  adapter or proxy in range sees it*, or the Bluetooth error); a second
+  warning reports when the network is reachable again. Shorter failures
+  stay at debug level.
 * **Unloading wins.** `disconnect()` cancels a running reconnect task and
   waits up to 5 s for it; once cancelled, no new reconnect is scheduled.
 
-Most of this is ported from upstream `dev`; see `tests/test_reconnect.py`.
+### Pitfalls found on the pergola
+
+Two outages on the real installation (the ESPHome proxy near the pergola
+dropped off Wi-Fi) exposed two traps in how the library reports a
+disconnect. Both are covered by tests that reproduce the library's order
+of operations.
+
+1. **The library calls back while it still says connected.**
+   `CasambiClient._on_disconnect` marks every unit offline and runs the
+   disconnect callbacks while `_connectionState` is still `AUTHENTICATED`,
+   and only sets it to `NONE` afterwards. Reading `casa.connected` inside
+   the callback therefore returns `True`: the Status sensor was written
+   *on* and never refreshed, while every unit entity was unavailable.
+   `CasambiApi` now tracks the link itself (`_link_up`): down in the
+   disconnect callback, up after a successful connect or reconnect, and
+   `available` is `_link_up and casa.connected`.
+2. **The reconnect task starts inside that callback.** Home Assistant
+   starts background tasks eagerly, so `reconnect()` ran synchronously
+   from the callback, still before the library switched to `NONE`.
+   `Casambi.reconnect()` begins with `if self.connected: return`, so it
+   returned at once without connecting, and the loop took that for
+   success and stopped. The units then stayed unavailable for hours even
+   after the proxy was back: the advertisement callback did not wake us,
+   presumably because Home Assistant skips advertisements whose content
+   did not change. `reconnect()` now yields once (`asyncio.sleep(0)`)
+   before its first attempt, and a reconnect that returns while
+   `casa.connected` is still false counts as a failed attempt.
+
+The units are marked offline by the library itself on a disconnect, and
+come back only when the network pushes their state again after a real
+reconnect, so a unit entity that stays unavailable while Status is on means
+the reconnect did not really happen.
+
+The backoff and reauth logic is ported from upstream `dev`; the link tracking, the eager-start guard and the outage warnings are this fork's. See `tests/test_reconnect.py`.
 
 ## Decoded Winsol hardware
 
@@ -164,6 +200,14 @@ a SetSlider reversed them (18:24:42 target 0 -> 255, 18:25:21 target
 started from Home Assistant is left alone until their travel time is
 known for an aim-ahead stop.
 
+A run Home Assistant does not see — while it is disconnected or
+restarting — leaves the reported target stale: after a wall-button run to
+the end the unit can keep reporting the old target with the bit clear, so
+the cover shows the wrong end. Resynchronise with a **position** command
+to where the screen really is (at the end it does not move). *Open*/*close*
+would set the bit, which runs opposite the motor's last run and can move
+it the wrong way.
+
 ### Real-world network layout
 
 For reference, a Winsol SO! Climate pergola commissioned in 2026 exposed
@@ -178,10 +222,12 @@ pergola heating and is exposed as a `switch`), one
 read-only 8-bit UNKNOWN control — the source of the wall-switch events, see
 below),
 and two `Repeater` units (mode `Sensor`, one UNKNOWN control). **No sensor
-platform was present**, so the weather entities and the weather
-protection switch do not appear on such a network; whether the pack's rain
-sensor is wired directly to the motor rather than onto the mesh is an open
-question for the installer.
+platform was present**, so the pergola has no weather sensing of its own:
+weather protection runs on Home Assistant entities chosen in the options
+(here a nearby Netatmo station's rain gauge, anemometer and thermometer).
+The network was only reachable through an ESPHome Bluetooth proxy near the
+pergola; when that proxy dropped off Wi-Fi, the whole network went
+unavailable.
 
 The Lamel itself declares four SENSOR controls and cycles through four
 channels in its state every ~4 s. Casambi's fixture definition
@@ -231,6 +277,15 @@ library behaviour. Pressing the buttons did not move any motor, so on this
 pack they are free for Home Assistant automations. The override can go once
 the library handles input-only units itself.
 
+The module's fixture (39267, LEDsGO, mode `PushButton`) declares four push
+buttons, a single read-only 8-bit `pushButtonState` control and **no
+parameters**. The illuminated rings of the Winsol buttons are powered
+straight from the 24 V supply in the post (Winsol's mounting manual notes
+that a miswired harness leaves the light working but the button dead), so
+neither Home Assistant nor the Casambi app can switch them off.
+`pushButtonState` might serve as a second source for presses and releases
+that get lost in the mesh; untested.
+
 ### Winsol Lamel Intelligent (Star) — decoded, not implemented
 
 The Star pack's louvre motor is a different, richer fixture: 7 bytes of
@@ -268,9 +323,9 @@ dimmer. Any richer motor is `UNSUPPORTED_MOTOR`: it gets no entities, a
 warning in the log and a *Repairs* issue naming the unit and its model
 (removed when the entry unloads).
 
-## Sun tracking
+## Pergola automation
 
-Louvre units get a **Sun tracking** switch and a **Sun offset** number
+**Sun tracking**: louvre units get a **Sun tracking** switch and a **Sun offset** number
 (config entities on the louvre device). While the switch is on, the
 integration recomputes the louvre angle every 5 minutes from the current
 solar position (via Home Assistant's astral location — the same engine as
@@ -289,8 +344,8 @@ warmer than the setpoint tilts toward shade, colder toward sun. The
 temperature source entity is chosen in the integration options.
 
 **Weather protection**: a network-level switch (created when a sensor
-platform exists or a rain entity is set in the options, and there is a
-louvre or screen to protect). While on: rain closes all louvres and
+platform exists or a rain or wind entity is set in the options, and there
+is a louvre or screen to protect). While on: rain closes all louvres and
 pauses sun tracking until dry. Rain is the OR of the sensor platform
 (packet 0 ≥ 2) and the rain entity (`entity_reports_rain`: binary sensor
 on, weather condition rainy/pouring/lightning-rainy/snowy-rainy/hail, any
@@ -300,8 +355,8 @@ reading); wind at or above the configured threshold
 tracking, latched with 80% hysteresis; screens are never re-extended
 automatically. Wind is the higher of the sensor platform (packet 1 / 4)
 and the wind entity (`entity_wind_kmh`, converted from its unit with
-`SpeedConverter`; no unit means km/h). The switch is also created when
-only a wind entity is set.
+`SpeedConverter`; no unit means km/h). It acts on the transitions, once
+when rain or wind starts: reopening the roof during the rain is not undone.
 
 **Frost lock**: a per-louvre config switch (on by default, restored).
 `CasambiApi.frost_lock_temperature(unit)` returns the reading while the
@@ -336,23 +391,35 @@ Correlating "action performed" with "bytes that changed" identifies each control
 
 ## Workflow
 
-This repository uses two important branches `main` and `dev`. Everything happening in `main` should be tested and planned for the next release. Changes that haven't been tested properly should only be applied to `dev`.
-
-If you want to contribute changes you should always target `dev`. The changes will be merged over to `main` in time for the next release.
-
-All changes on `main` and `dev` must conform to the coding standards used for this repository. This will be verified automatically when creating a pull request but to avoid delays the necessary checks should be performed beforehand. This means running
+Changes go to a feature branch and reach `main` through a pull request on
+the fork; `main` is what HACS installs. Before pushing, run:
 
 ```bash
-ruff check .
-black . --check
+pytest tests
+ruff check custom_components tests
+ruff format --check custom_components tests
+mypy custom_components/casambi_bt
 ```
 
-For `casambi-bt` also run `mypy .`. All of these tools should be available when following the recommended setup procedure.
+Changes meant for upstream ([lkempf/casambi-bt-hass](https://github.com/lkempf/casambi-bt-hass))
+are prepared separately on a branch based on its `dev` branch, in its
+style, and opened from the fork. Upstream has no test suite, so they are
+checked against a temporary test that is not part of the branch.
+
+### Upstream status
+
+| Finding | Where | State |
+|---|---|---|
+| Status sensor never follows the connection; reconnect stops on the library's early return | integration | branch `fix-status-after-disconnect`, ready to open |
+| Disconnect callbacks run before the state becomes `NONE` | library | to report as an issue |
+| Wired push buttons (0x12 input stream only) | library | to propose, replaces `switch_decoder.py` |
+| `turnOn` sends `SetLevel ff05`, ignored by On-Off relays | library | to report as an issue |
+| Winsol covers, relay switch, louvre sensors | integration | to discuss in an issue first |
 
 ### Supporting several Home Assistant versions
 
 The minimum supported core is 2026.6, the first to ship bleak 3, which
-`casambi-bt` 0.4.0b4 and later require (`hacs.json` enforces it). The test
+`casambi-bt` 0.4.0b4 and later require (this fork pins 0.4.0b5) (`hacs.json` enforces it). The test
 requirements still pin the 2026.2.3 harness, the last one installable on
 Python 3.13 as used by CI; pip pulls bleak 3 into it for the library, so the
 suite runs fine there. Two helpers changed in newer cores and the integration
