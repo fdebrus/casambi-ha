@@ -92,7 +92,7 @@ which this integration uses):
 | Unit | Mode | Controls | Exposed as |
 |---|---|---|---|
 | Winsol Lamel Standard V4.1 (louvres) | `EXT/Elements` | slider `$pos` (0–142°, bits 28–35), onoff `$startstop` (bit 36), 4 multiplexed sensor channels (header bits 0–3, value bits 4–27): Temperatuur °C, #Overcurrent, Travel Distance, Module State | Cover (blind) with position + stop, plus a temperature sensor and three diagnostic sensors |
-| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors (channels 1 and 2, ms) | Cover (shade) with position (estimated from the travel time while moving, with opening/closing), stop = clear the start/stop bit for a button run, SetLevel just ahead of the estimated position otherwise |
+| Winsol SO! V4.1 (screen) | `EXT/1ch/Dim` | dimmer "Screen Position" (bits 28–35, reports the *target*), onoff `$toggle` (bit 36, **reverses** the motion), travel-time sensors *Time Up* (channel 1) and *Time Down* (channel 2), ms | Cover (shade) with position (estimated from the travel time while moving, with opening/closing), stop = clear the start/stop bit for a button run, SetLevel just ahead of the estimated position otherwise |
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (writes the ONOFF bit both ways; the library's `turnOn` sends `SetLevel ff05`, which the relay ignores) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
 
@@ -191,7 +191,9 @@ when the bit clears. Confirmed on hardware for both stops.
 
 Because the reported dimmer is the target, a close used to show "closed"
 at once. The cover estimates the position from the timestamp of each
-target change and the travel time on sensor channels 1 and 2 (35000 ms,
+target change and the travel time for that direction — *Time Up* on
+channel 1 when retracting, *Time Down* on channel 2 when extending (35000 ms
+both ways here,
 the default until seen), reports opening or closing meanwhile, and
 refreshes once a second until the estimate arrives. The louvres' onoff
 bit (`$startstop`) behaves the same way: setting it while they moved after
@@ -207,6 +209,28 @@ the cover shows the wrong end. Resynchronise with a **position** command
 to where the screen really is (at the end it does not move). *Open*/*close*
 would set the bit, which runs opposite the motor's last run and can move
 it the wrong way.
+
+### SO! V4.1 fixture (27814)
+
+The screen's fixture definition (`https://api.casambi.com/fixture/27814`,
+vendor LEDsGo, firmware type `SABI`) names the two sensors **Time Up**
+(tag 0, channel 1) and **Time Down** (tag 1, channel 2), in ms, 0–300000.
+They are the travel times measured by the motor's calibration run, so they
+follow a recalibration; the integration reads them live. It also declares
+one local push-button input (`pushButtonCount: 1`, none configured) and two
+alternative profiles (27815, 27816).
+
+Its parameters, set in the Casambi app, as found on this pergola:
+
+| Parameter | Value | Meaning, as far as known |
+|---|---|---|
+| Idle | 200 ms | pause before the motor can run again (presumably before reversing) |
+| Back Impulse | 30 ms | short reverse pulse after a stop, to release the fabric tension |
+| Operation Mode | Normal | *Calibration* re-measures the travel times |
+| Motor Direction | Left | mounting side |
+| Sensor ID | 7 | unit id of a sensor to obey; 7 is the louvre motor on this network, and the louvre declares 7 too, so most likely a factory default for a Winsol sensor platform |
+| Service Mode | On | unknown |
+| Rain Sensor | No | the screens ignore rain; no rain sensor on this pack |
 
 ### Real-world network layout
 

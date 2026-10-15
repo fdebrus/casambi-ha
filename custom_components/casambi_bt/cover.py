@@ -41,11 +41,12 @@ PARALLEL_UPDATES = 0
 
 CASA_RAW_MAX: Final = 255
 
-# Winsol SO! screens report their full-range travel time in milliseconds on
-# sensor channels 1 and 2 (35000 on the hardware this was captured on, the
-# same both ways, so which channel is which direction is an assumption).
-TRAVEL_CHANNEL_EXTEND: Final = 1
-TRAVEL_CHANNEL_RETRACT: Final = 2
+# Winsol SO! screens report their full-range travel times in milliseconds,
+# measured by the motor's calibration run. The fixture (27814) names sensor
+# tag 0 "Time Up" and tag 1 "Time Down"; the channel header is tag + 1.
+# Up retracts the screen into its box, down extends it.
+TRAVEL_CHANNEL_RETRACT: Final = 1
+TRAVEL_CHANNEL_EXTEND: Final = 2
 DEFAULT_TRAVEL_MS: Final = 35000
 
 # A moving screen ignores a target behind it, so Stop aims this far ahead

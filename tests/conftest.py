@@ -191,8 +191,8 @@ def make_winsol_screen_unit() -> Unit:
     """Create a unit modeled on the Winsol SO! V4.1 screen fixture.
 
     Control layout from the real fixture definition: travel-time sensors
-    (bits 0-27), dimmer "Screen Position" (bits 28-35), onoff $toggle
-    (bit 36).
+    "Time Up" and "Time Down" (bits 0-27, channels 1 and 2), dimmer "Screen
+    Position" (bits 28-35), onoff $toggle (bit 36).
     """
     state = UnitState()
     state.dimmer = 64
