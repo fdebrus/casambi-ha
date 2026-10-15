@@ -416,8 +416,8 @@ async def test_screen_shows_estimated_position_while_moving(
             async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
             await hass.async_block_till_done()
 
-        # Captured SO! V4.1 states: retracted at rest (channel 1 = 35000 ms
-        # travel), let the fixture's own move from 64 finish first.
+        # Captured SO! V4.1 states: retracted at rest (channel 1 = Time Up,
+        # 35000 ms), let the fixture's own move from 64 finish first.
         await report("818b080000")
         clock[0] = 1020.0
         await tick(0)
@@ -814,3 +814,23 @@ async def test_sensor_entities_available_while_unit_offline(
         state = hass.states.get(_entity_id(hass, domain, f"{prefix}-{key}"))
         assert state is not None
         assert state.state != "unavailable", f"{domain}.{key} is unavailable"
+
+
+async def test_screen_travel_time_per_direction(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that extending uses Time Down and retracting uses Time Up."""
+    await _setup(hass, mock_config_entry)
+    entity_id = _entity_id(
+        hass, COVER_DOMAIN, f"{NETWORK_ID}-unit-{WINSOL_SCREEN_UUID}-cover"
+    )
+    entity = hass.data["entity_components"][COVER_DOMAIN].get_entity(entity_id)
+    assert entity is not None
+
+    # Channel 1 is the fixture's "Time Up", channel 2 its "Time Down".
+    entity._travel_ms = {1: 40000, 2: 20000}  # noqa: SLF001
+    assert entity._travel_seconds(extending=True) == 20.0  # noqa: SLF001
+    assert entity._travel_seconds(extending=False) == 40.0  # noqa: SLF001
