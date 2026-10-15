@@ -295,7 +295,7 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         """Run to an end like the wall button when the bit goes that way."""
         control = self._toggle_control
         raising = raw_end > (self._rest_raw if self._rest_raw is not None else -1)
-        if control is not None and not self._api.demo:
+        if control is not None:
             if self._toggle_running():
                 if self._last_raising == (raw_end == CASA_RAW_MAX):
                     return

@@ -30,13 +30,9 @@ USER_INPUT = {
 
 
 async def _start_network_flow(hass: HomeAssistant) -> dict:
-    """Open the config flow and choose the real-network branch."""
-    result = await hass.config_entries.flow.async_init(
+    """Open the config flow on the network form."""
+    return await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
-    )
-    assert result["type"] is FlowResultType.MENU
-    return await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"next_step_id": "network"}
     )
 
 

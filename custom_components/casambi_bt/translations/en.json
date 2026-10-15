@@ -41,12 +41,6 @@
                 },
                 "title": "Configure your Casambi network",
                 "description": "Find the bluetooth MAC address (Network ID) in the luminair details of your casambi app."
-            },
-            "user": {
-                "menu_options": {
-                    "network": "Connect to a Casambi network",
-                    "demo": "Demo (no hardware needed)"
-                }
             }
         }
     },
@@ -88,9 +82,6 @@
             }
         },
         "number": {
-            "demo_wind": {
-                "name": "Simulated wind"
-            },
             "sun_offset": {
                 "name": "Sun offset"
             },
@@ -128,12 +119,6 @@
             }
         },
         "switch": {
-            "demo_presence": {
-                "name": "Simulate presence"
-            },
-            "demo_rain": {
-                "name": "Simulate rain"
-            },
             "frost_lock": {
                 "name": "Frost lock"
             },

@@ -41,12 +41,6 @@
                 },
                 "title": "Casambi Netzwerk einrichten",
                 "description": "Die Bluetooth MAC Adresse (Netzwerk ID) findest du in den Details deiner Lampen in der Casambi App."
-            },
-            "user": {
-                "menu_options": {
-                    "network": "Mit einem Casambi Netzwerk verbinden",
-                    "demo": "Demo (ohne Hardware)"
-                }
             }
         }
     },
@@ -88,9 +82,6 @@
             }
         },
         "number": {
-            "demo_wind": {
-                "name": "Simulierter Wind"
-            },
             "sun_offset": {
                 "name": "Sonnen-Offset"
             },
@@ -128,12 +119,6 @@
             }
         },
         "switch": {
-            "demo_presence": {
-                "name": "Anwesenheit simulieren"
-            },
-            "demo_rain": {
-                "name": "Regen simulieren"
-            },
             "frost_lock": {
                 "name": "Frostsperre"
             },

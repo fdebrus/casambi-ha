@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
-from typing import Any, Final, cast
+from typing import Any, Final
 
 from CasambiBt import Unit, UnitControl, UnitControlType
 
@@ -57,7 +57,6 @@ from .const import (
     DEFAULT_WIND_THRESHOLD,
     entry_option,
 )
-from .demo import DemoCasambi
 from .entities import (
     CasambiBroadcastUnitEntity,
     CasambiNetworkEntity,
@@ -201,13 +200,6 @@ async def async_setup_entry(
         entities.extend(
             CasambiSensorEnableSwitch(casa_api, unit, control, key)
             for control, key in zip(enable_controls, SENSOR_ENABLE_KEYS, strict=False)
-        )
-
-    if casa_api.demo:
-        entities.extend(
-            CasambiDemoToggle(casa_api, unit, kind)
-            for unit in sensor_platforms
-            for kind in ("rain", "presence")
         )
 
     weather_entities = [
@@ -715,51 +707,3 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         # Retracted is raw 0 on the Winsol SO!: the dimmer counts how far
         # the screen is extended, not how open it is.
         await self._async_casa_command(self._api.casa.setLevel(unit, 0))
-
-
-class CasambiDemoToggle(CasambiBroadcastUnitEntity, SwitchEntity):
-    """Drives a simulated reading of the demo network.
-
-    Only created in demo mode, where it lets the weather protection and
-    the presence automations be tried out without hardware.
-    """
-
-    _attr_entity_category = EntityCategory.CONFIG
-
-    def __init__(self, api: CasambiApi, unit: Unit, kind: str) -> None:
-        """Initialize a demo toggle."""
-        desc = TypedEntityDescription(
-            key=unit.uuid,
-            entity_type=f"demo-{kind}",
-            translation_key=f"demo_{kind}",
-        )
-        self._obj: Unit
-        super().__init__(api, desc, unit)
-        self._kind = kind
-
-    @property
-    def _demo(self) -> DemoCasambi:
-        return cast("DemoCasambi", self._api.casa)
-
-    @property
-    def is_on(self) -> bool:
-        """Return the simulated value."""
-        if self._kind == "rain":
-            return self._demo.raining
-        return self._demo.presence
-
-    def _set(self, value: bool) -> None:
-        if self._kind == "rain":
-            self._demo.raining = value
-        else:
-            self._demo.presence = value
-        self._demo.refresh_sensors()
-        self.async_write_ha_state()
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Start simulating the condition."""
-        self._set(True)
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Stop simulating the condition."""
-        self._set(False)

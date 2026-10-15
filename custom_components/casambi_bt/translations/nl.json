@@ -34,12 +34,6 @@
                     "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?"
                 },
                 "title": "Configureer uw Casambi netwerk"
-            },
-            "user": {
-                "menu_options": {
-                    "network": "Verbinden met een Casambi netwerk",
-                    "demo": "Demo (geen hardware nodig)"
-                }
             }
         }
     },
@@ -81,9 +75,6 @@
             }
         },
         "number": {
-            "demo_wind": {
-                "name": "Gesimuleerde wind"
-            },
             "sun_offset": {
                 "name": "Zon-offset"
             },
@@ -121,12 +112,6 @@
             }
         },
         "switch": {
-            "demo_presence": {
-                "name": "Aanwezigheid simuleren"
-            },
-            "demo_rain": {
-                "name": "Regen simuleren"
-            },
             "frost_lock": {
                 "name": "Vorstvergrendeling"
             },

@@ -139,7 +139,7 @@ bit's direction (up from the closed end, down from the open end, otherwise
 opposite the last run) and drives open/close with the bit whenever that is
 the requested way, so stop can clear it like the button. Otherwise
 open/close send a position, and the subclass handles stop (aim ahead on
-screens, nothing on louvres). The demo network always uses positions.
+screens, nothing on louvres).
 
 So the toggle reverses, and the vendor app has no working stop either. A
 position sent while the screen moves is honoured only when it lies ahead
@@ -311,15 +311,6 @@ when the entity can't tell. The louvre cover then raises
 `ServiceValidationError` (`frost_lock`) on open and on any position above
 the current one, and sun tracking skips its update; closing, stopping and
 weather protection are not affected.
-
-## Demo mode
-
-`demo.py` contains `DemoCasambi`, a local stand-in that implements the parts
-of the `CasambiBt.Casambi` API the integration uses. It builds real `Unit`,
-`Group` and `Scene` objects from the Winsol fixture definitions, applies
-commands to their state and notifies the registered handlers, so every
-platform behaves as it does against hardware. `CasambiApi` selects it when
-the config entry carries `demo: true` and then skips Bluetooth entirely.
 
 ## Protocol capture workflow (decoding the pergola)
 
