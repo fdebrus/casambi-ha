@@ -245,17 +245,32 @@ pergola heating and is exposed as a `switch`), one
 `24VDC_4CH_PB_Winsol` push-button interface (mode `PushButton`, one
 read-only 8-bit UNKNOWN control — the source of the wall-switch events, see
 below),
-and two `Repeater` units (mode `Sensor`). The repeater fixture (15248,
-LEDsGO) declares a single 1-bit `placeholder` control and no parameters:
-it only extends the mesh. Its `hasPresenceSensor`/`hasLightSensor` flags
-(`maxLux` 1000) belong to the generic sensor module it is built on; it
-reports no readings (its state stays `00`), so it gets no entities. **No sensor
+and two `Repeater` units (mode `Sensor`). **No sensor
 platform was present**, so the pergola has no weather sensing of its own:
 weather protection runs on Home Assistant entities chosen in the options
 (here a nearby Netatmo station's rain gauge, anemometer and thermometer).
 The network was only reachable through an ESPHome Bluetooth proxy near the
 pergola; when that proxy dropped off Wi-Fi, the whole network went
 unavailable.
+
+All of its fixture definitions have been read
+(`https://api.casambi.com/fixture/<id>`):
+
+| Fixture | Model | Controls | Parameters | Notes |
+|---|---|---|---|---|
+| 38915 | Winsol Lamel Standard V4.1 | 4 sensors, slider `$pos`, onoff `$startstop` | orientation, current limit, sensor id, … (below) | the louvres |
+| 27814 | SO! V4.1 | sensors *Time Up* / *Time Down*, dimmer, onoff `$toggle` | idle, back impulse, calibration, … (below) | the screens |
+| 10025 | Winsol On-Off | one onoff "On/Off" (flags 6) | none | the heating; has a configurable start-up state |
+| 7799 | Winsol Mono | one 8-bit dimmer | none | the spots; five alternative profiles, configurable start-up state |
+| 39267 | 24VDC_4CH_PB_Winsol | read-only `pushButtonState` | none | 4 button inputs (below) |
+| 15248 | Repeater | one 1-bit `placeholder` | none | only extends the mesh; its presence/light-sensor flags (`maxLux` 1000) come from the generic module and it never reports readings |
+
+The relay and the spots match what the integration does with them — a
+`switch` writing the ONOFF bit, a dimmable `light`. Two things stay
+unknown: what the relay's on/off `flags` value 6 means (the screen's
+`$toggle` has 0), and the *start-up state* both offer in the Casambi app.
+The latter decides whether the heating comes back on after a power cut,
+so it is worth checking in the app.
 
 The Lamel itself declares four SENSOR controls and cycles through four
 channels in its state every ~4 s. Casambi's fixture definition
