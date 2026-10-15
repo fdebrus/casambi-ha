@@ -43,6 +43,8 @@ RECONNECT_BACKOFF_START: Final = 2
 RECONNECT_BACKOFF_STEP: Final = 2
 RECONNECT_BACKOFF_MAX: Final = 300
 RECONNECT_BACKOFF_NO_DEVICE: Final = 60
+# Warn in the log once a reconnect has been failing for this long (s).
+RECONNECT_WARN_AFTER: Final = 300
 
 
 def entry_option(entry: ConfigEntry, key: str, default: Any) -> Any:
