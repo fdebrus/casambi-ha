@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABCMeta, abstractmethod
 from collections.abc import Callable, Coroutine
 from datetime import timedelta
-import logging
 import math
 from time import monotonic
 from typing import Any, Final
@@ -39,8 +38,6 @@ from .entities import (
     TypedEntityDescription,
 )
 from .sensor import decode_louvre_channel
-
-_LOGGER = logging.getLogger(__name__)
 
 # State is pushed by the Casambi network, no coordinated polling is required.
 PARALLEL_UPDATES = 0
@@ -109,16 +106,7 @@ class CasambiCover(CasambiEntity, CoverEntity, metaclass=ABCMeta):
         | CoverEntityFeature.CLOSE
         | CoverEntityFeature.SET_POSITION
     )
-
-    def __init__(
-        self,
-        api: CasambiApi,
-        description: TypedEntityDescription,
-        obj: Group | Unit,
-    ) -> None:
-        """Initialize a Casambi cover entity base class."""
-        self._obj: Group | Unit
-        super().__init__(api, description, obj)
+    _obj: Group | Unit
 
     @property
     def is_closed(self) -> bool | None:
@@ -454,13 +442,18 @@ class CasambiScreenCover(CasambiMotorCover):
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a screen cover entity."""
-        super().__init__(api, unit)
+        # Before the base class, whose __init__ already follows the run.
         self._travel_ms: dict[int, int] = {}
         self._target: int | None = None
         self._move_from = 0.0
         self._move_start: float | None = None
         self._cancel_tick: Callable[[], None] | None = None
         self._button_run = False
+        # After a button-style run ends, the next reported target is where
+        # the screen stopped, not a new run; the stale one is ignored.
+        self._settling = False
+        self._stale_target: int | None = None
+        super().__init__(api, unit)
         self._track_motion(unit)
         self._note_direction(unit)
 
@@ -526,10 +519,15 @@ class CasambiScreenCover(CasambiMotorCover):
                 # Started like the wall button: the reported target is stale
                 # and the screen heads for the end opposite its last run.
                 estimate = self._estimate(now)
+                if estimate is None:
+                    # Nowhere known to start from (first state after a
+                    # reconnect): wait for the run to end and take the
+                    # position reported then.
+                    return False
                 if self._last_raising is not None:
                     extending = not self._last_raising
                 else:
-                    extending = (estimate or 0) < CASA_RAW_MAX / 2
+                    extending = estimate < CASA_RAW_MAX / 2
                 return self._start_motion(CASA_RAW_MAX if extending else 0, now)
             # The run ended: freeze where the screen is. The target in this
             # same update is still the stale one; the next reports where it
@@ -538,11 +536,22 @@ class CasambiScreenCover(CasambiMotorCover):
             if estimate is not None:
                 self._target = round(estimate)
             self._move_start = None
+            self._settling = True
+            self._stale_target = state.dimmer
             return False
         if button_run:
             return False
 
         target = state.dimmer
+        if self._settling:
+            # Where the screen actually stopped. Not a run: it differs from
+            # the estimate by the estimate's error, which says nothing
+            # about the direction of the run that just ended.
+            if target is None or target == self._stale_target:
+                return False
+            self._settling = False
+            self._target = target
+            return False
         if target is None or target == self._target:
             return False
         return self._start_motion(target, now)
@@ -559,8 +568,6 @@ class CasambiScreenCover(CasambiMotorCover):
         The screen tracks its runs itself (``_track_motion``), which also
         sets the direction of the last one.
         """
-        if not hasattr(self, "_target"):
-            return
         if self._toggle_running(unit) or self._moving():
             return
         self._rest_raw = self._target
@@ -578,13 +585,17 @@ class CasambiScreenCover(CasambiMotorCover):
         """Forget the motion when the link drops.
 
         The screen may be driven while Home Assistant can't see it, so the
-        last target is no reference for where it is when the link returns:
+        last target and the direction of the last run are no reference for
+        where it is or which way the button sends it when the link returns:
         the first state pushed after a reconnect is taken as rest.
         """
         if not self._api.available:
             self._target = None
             self._move_start = None
             self._button_run = False
+            self._settling = False
+            self._last_raising = None
+            self._rest_raw = None
             self._stop_ticking()
         super()._connection_callback()
 

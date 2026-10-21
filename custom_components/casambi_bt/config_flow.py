@@ -52,6 +52,9 @@ USER_SCHEMA = vol.Schema(
     }
 )
 
+# Settings asked at setup that the options flow can change later.
+_USER_FLAGS = (CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER)
+
 REAUTH_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_PASSWORD): cv.string,
@@ -299,10 +302,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             if info is not None:
                 if info["id"] != entry.unique_id:
                     return self.async_abort(reason="wrong_network")
+                # The two flags are also options, which take precedence
+                # over the entry data once the options flow has been used.
                 self.hass.config_entries.async_update_entry(
                     entry,
                     title=info["title"],
                     data={**entry.data, **user_input},
+                    options={
+                        **entry.options,
+                        **{key: user_input[key] for key in _USER_FLAGS},
+                    },
                 )
                 await self.hass.config_entries.async_reload(entry.entry_id)
                 return self.async_abort(reason="reconfigure_successful")
@@ -315,11 +324,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 errors=errors,
             )
 
+        current = {
+            **entry.data,
+            **{key: entry_option(entry, key, entry.data[key]) for key in _USER_FLAGS},
+        }
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=self.add_suggested_values_to_schema(
-                USER_SCHEMA, dict(entry.data)
-            ),
+            data_schema=self.add_suggested_values_to_schema(USER_SCHEMA, current),
         )
 
     async def async_step_reauth(

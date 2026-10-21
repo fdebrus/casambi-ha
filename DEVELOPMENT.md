@@ -81,9 +81,28 @@ of operations.
    before its first attempt, and a reconnect that returns while
    `casa.connected` is still false counts as a failed attempt.
 
-The screen cover also forgets its motion estimate when the link drops
-(`_connection_callback`): the first state pushed after a reconnect is
-taken as rest, since the screen may have been driven meanwhile.
+The screen cover also forgets its motion estimate, the direction of its
+last run and its rest position when the link drops
+(`_connection_callback`): the screen may have been driven meanwhile, so
+the first state pushed after a reconnect is taken as rest, and a button
+run already under way then is left alone until it ends and the screen
+reports where it stopped.
+
+Two more traps, found by review rather than on the pergola:
+
+3. **Every cloud answer but OK is an `AuthenticationError`.** The library
+   raises it for a 5xx or 429 from api.casambi.com too, which happens when
+   the pickled session has expired during a cloud outage. Taken for a wrong
+   password it starts a reauth, and re-entering the password wipes the
+   network cache (`invalidateCache`), which is what offline operation runs
+   on. `connect()` reads the status out of the message and retries those
+   like any other outage.
+4. **Giving up on protocol errors moved the retries elsewhere.** With the
+   reconnect task gone, every advertisement of the network started a fresh
+   one, two attempts at a time and without any backoff. Repeated protocol
+   errors now keep the task alive at the slowest backoff. A changed network
+   key shows up here as well: `Casambi.reconnect()` only redoes the BLE
+   handshake, it never logs in, so it can't raise `AuthenticationError`.
 
 The units are marked offline by the library itself on a disconnect, and
 come back only when the network pushes their state again after a real
@@ -130,6 +149,17 @@ The louvre slider (0–142°) is **not** inverted: slider 0 is the louvres
 closed flat into a sealed roof, 142 fully open, matching the Home Assistant
 position straight through. Confirmed on the same pergola — with the roof
 physically closed the unit reports `slider: 0` and the cover shows closed.
+
+### Screen: the position reported after a button stop is not a run
+
+When the wall button stops the screen, the integration freezes the
+estimate and the screen then reports where it actually stopped, a few raw
+units off the estimate. Read as a run, the sign of that correction set the
+direction of the last run (`_last_raising`), which decides which way the
+start/stop bit sends the motor next: open or close from Home Assistant
+could then drive it the wrong way. The report after a button stop is
+taken as the rest position (`_settling`) and says nothing about the
+direction; a repeat of the stale target is ignored.
 
 ### Screen stop — only a target ahead of the screen is honoured
 

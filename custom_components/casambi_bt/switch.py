@@ -21,14 +21,7 @@ from typing import Any, Final
 from CasambiBt import Unit, UnitControl, UnitControlType
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
-from homeassistant.const import (
-    ATTR_UNIT_OF_MEASUREMENT,
-    STATE_OFF,
-    STATE_ON,
-    STATE_UNAVAILABLE,
-    STATE_UNKNOWN,
-    UnitOfSpeed,
-)
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import (
     Event,
     EventStateChangedData,
@@ -44,7 +37,6 @@ from homeassistant.helpers.event import (
     async_track_time_interval,
 )
 from homeassistant.helpers.restore_state import RestoreEntity
-from homeassistant.util.unit_conversion import SpeedConverter
 
 from . import CasambiApi, CasambiConfigEntry
 from .binary_sensor import PACKET_RAIN, RAIN_THRESHOLD
@@ -68,6 +60,7 @@ from .entities import (
     CasambiUnitEntity,
     TypedEntityDescription,
 )
+from .readings import entity_reports_rain, entity_temperature_c, entity_wind_kmh
 from .sensor import PACKET_WIND
 from .suntrack import LOUVRE_MAX_ANGLE, compute_louvre_angle, get_sun_position
 
@@ -91,52 +84,6 @@ OFFSET_LIMIT: Final = 45.0
 # Re-arm the wind latch when the wind drops below this fraction of the
 # threshold.
 WIND_HYSTERESIS: Final = 0.8
-
-# Weather entity conditions that count as rain.
-RAIN_CONDITIONS: Final = frozenset(
-    {"rainy", "pouring", "lightning-rainy", "snowy-rainy", "hail"}
-)
-
-
-def entity_reports_rain(state: State | None) -> bool | None:
-    """Return whether a rain entity reports rain, or None if it can't tell.
-
-    A binary sensor reports rain when on (e.g. a moisture sensor), a
-    weather entity when its condition is a rainy one, and any other sensor
-    when its value is above zero (e.g. a precipitation rate in mm/h).
-    """
-    if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-        return None
-    if state.domain == "binary_sensor":
-        return state.state == STATE_ON
-    if state.domain == "weather":
-        return state.state in RAIN_CONDITIONS
-    try:
-        return float(state.state) > 0
-    except ValueError:
-        return None
-
-
-def entity_wind_kmh(state: State | None) -> float | None:
-    """Return a wind speed entity's reading in km/h, or None if it can't tell.
-
-    The reading is converted from the entity's unit of measurement; one
-    without a unit is taken as km/h.
-    """
-    if state is None:
-        return None
-    try:
-        value = float(state.state)
-    except ValueError:
-        return None
-    unit = state.attributes.get(ATTR_UNIT_OF_MEASUREMENT)
-    if not unit or unit == UnitOfSpeed.KILOMETERS_PER_HOUR:
-        return value
-    try:
-        return SpeedConverter.convert(value, unit, UnitOfSpeed.KILOMETERS_PER_HOUR)
-    except HomeAssistantError:
-        _LOGGER.warning("Unsupported wind speed unit %s on %s", unit, state.entity_id)
-        return None
 
 
 # The sensor platform's writable enable bits, in bit-offset order
@@ -254,12 +201,14 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
         await self._async_casa_command(
             self._api.casa.setControlValue(self._obj, self._control, 1)
         )
+        self.async_write_ha_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Open the relay."""
         await self._async_casa_command(
             self._api.casa.setControlValue(self._obj, self._control, 0)
         )
+        self.async_write_ha_state()
 
 
 class CasambiLouvreAutomationSwitch(
@@ -360,12 +309,8 @@ class CasambiSunTrackingSwitch(CasambiLouvreAutomationSwitch):
         entity_id = entry_option(self._config_entry, CONF_TEMPERATURE_ENTITY, None)
         if not entity_id:
             return 0.0
-        state = self.hass.states.get(entity_id)
-        if state is None:
-            return 0.0
-        try:
-            temperature = float(state.state)
-        except ValueError:
+        temperature = entity_temperature_c(self.hass.states.get(entity_id))
+        if temperature is None:
             return 0.0
 
         setpoint = self._api.temp_setpoints.get(unit.uuid, DEFAULT_TEMP_SETPOINT)
@@ -407,7 +352,12 @@ class CasambiSunTrackingSwitch(CasambiLouvreAutomationSwitch):
         _LOGGER.debug(
             "Sun tracking %s: angle %.1f deg -> slider %i", unit.name, angle, target_raw
         )
-        await self._async_casa_command(self._api.casa.setSlider(unit, target_raw))
+        try:
+            await self._async_casa_command(self._api.casa.setSlider(unit, target_raw))
+        except HomeAssistantError:
+            # The next update tries again; a flaky link is not worth a
+            # traceback every five minutes.
+            _LOGGER.warning("Sun tracking: could not move %s", unit.name)
 
 
 class CasambiTemperatureControlSwitch(CasambiLouvreAutomationSwitch):
@@ -560,7 +510,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         """Restore state and start listening to the weather sources."""
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state == "on":
+        if last_state is not None and last_state.state == STATE_ON:
             self._attr_is_on = True
         for unit in self._sensor_platforms:
             self._api.register_unit_updates(unit, self._sensor_update)

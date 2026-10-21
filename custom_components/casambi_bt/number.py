@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from abc import ABCMeta, abstractmethod
-import logging
 
 from CasambiBt import Group, Unit, UnitControlType
 
@@ -21,6 +20,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
 from .const import (
+    CASA_RAW_MAX,
     CONF_IMPORT_GROUPS,
     CONF_VERTICAL_AS_COVER,
     DEFAULT_TEMP_SETPOINT,
@@ -33,8 +33,6 @@ from .entities import (
     CasambiUnitEntity,
     TypedEntityDescription,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 # State is pushed by the Casambi network, no coordinated polling is required.
 PARALLEL_UPDATES = 0
@@ -176,7 +174,7 @@ class CasambiVerticalNumber(CasambiEntity, NumberEntity, metaclass=ABCMeta):
 
         self._attr_mode = NumberMode.SLIDER
         self._attr_native_min_value = 0
-        self._attr_native_max_value = 255
+        self._attr_native_max_value = CASA_RAW_MAX
 
         self._obj: Group | Unit
         super().__init__(api, description, obj)
@@ -226,10 +224,9 @@ class CasambiVerticalNumberGroup(CasambiVerticalNumber, CasambiNetworkGroup):
     @property
     def native_value(self) -> float | None:
         """Get the average vertical value of the group."""
-        group = self._obj
         values = [
             float(unit.state.vertical)
-            for unit in group.units
+            for unit in self._unit_map.values()
             if unit.state is not None and unit.state.vertical is not None
         ]
         if values:

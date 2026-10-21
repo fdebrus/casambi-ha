@@ -155,25 +155,20 @@ class CasambiLouvreChannelSensor(CasambiUnitEntity, SensorEntity):
 
     def __init__(self, api: CasambiApi, unit: Unit, channel: int) -> None:
         """Initialize a channel sensor."""
-        spec = LOUVRE_CHANNELS.get(channel)
+        spec = LOUVRE_CHANNELS.get(channel) or LouvreChannel(key="louvre_channel")
         # The unique id keeps the channel number so history survives renames.
         desc = TypedSensorEntityDescription(
-            key=unit.uuid,
-            entity_type=f"channel-{channel}",
-            translation_key=spec.key if spec else "louvre_channel",
+            key=unit.uuid, entity_type=f"channel-{channel}", translation_key=spec.key
         )
         self._obj: Unit
         super().__init__(api, desc, unit)
         self._channel = channel
-        if spec is None:
+        if spec.key == "louvre_channel":
             self._attr_translation_placeholders = {"channel": str(channel)}
-            self._attr_entity_category = EntityCategory.DIAGNOSTIC
-            self._attr_state_class = SensorStateClass.MEASUREMENT
-        else:
-            self._attr_device_class = spec.device_class
-            self._attr_native_unit_of_measurement = spec.unit
-            self._attr_state_class = spec.state_class
-            self._attr_entity_category = spec.category
+        self._attr_device_class = spec.device_class
+        self._attr_native_unit_of_measurement = spec.unit
+        self._attr_state_class = spec.state_class
+        self._attr_entity_category = spec.category
         self._value: int | None = None
         self._apply_update(unit)
 
