@@ -1,5 +1,6 @@
 """Tests for Winsol pergola support: louvre cover, screen cover, sensors."""
 
+from collections import Counter
 from dataclasses import replace
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
@@ -27,13 +28,15 @@ from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN
 from homeassistant.components.switch import DOMAIN as SWITCH_DOMAIN
 from homeassistant.const import (
     ATTR_ENTITY_ID,
+    EVENT_STATE_CHANGED,
+    EVENT_STATE_REPORTED,
     SERVICE_TURN_OFF,
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
     STATE_UNKNOWN,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 
@@ -348,6 +351,66 @@ async def test_louvre_channel_sensors(
         registry.async_get_entity_id("sensor", DOMAIN, f"{screen_prefix}-channel-1")
         is None
     )
+
+
+async def test_louvre_entities_write_only_what_changed(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a pushed state is written only by the entities it changes.
+
+    The louvre motor pushes its whole state every few seconds while it
+    cycles through its sensor channels, and every entity of the unit is
+    notified each time. A channel sensor writes once, when its channel comes
+    round; the automation switches and dials, whose values are not in the
+    pushed state, never write; the cover writes on every push.
+    """
+    await _setup(hass, mock_config_entry)
+
+    prefix = f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}"
+    cover_id = _entity_id(hass, COVER_DOMAIN, f"{prefix}-cover")
+    channel_ids = [
+        _entity_id(hass, "sensor", f"{prefix}-channel-{n}") for n in range(1, 5)
+    ]
+    config_ids = [
+        _entity_id(hass, SWITCH_DOMAIN, f"{prefix}-sun-tracking"),
+        _entity_id(hass, SWITCH_DOMAIN, f"{prefix}-temperature-control"),
+        _entity_id(hass, SWITCH_DOMAIN, f"{prefix}-frost-lock"),
+        _entity_id(hass, "number", f"{prefix}-sun-offset"),
+        _entity_id(hass, "number", f"{prefix}-temp-setpoint"),
+    ]
+
+    writes: Counter[str] = Counter()
+
+    @callback
+    def _count(event: Event) -> None:
+        writes[event.data["entity_id"]] += 1
+
+    @callback
+    def _any(_data: object) -> bool:
+        return True
+
+    hass.bus.async_listen(EVENT_STATE_CHANGED, _count)
+    hass.bus.async_listen(EVENT_STATE_REPORTED, _count, event_filter=_any)
+
+    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+    for packet in ("1101000000", "0200000000", "d301000000", "2403000000"):
+        louvre.state._raw_state = bytes.fromhex(packet)  # noqa: SLF001
+        handler(louvre)
+        await hass.async_block_till_done()
+
+    assert [writes[e] for e in channel_ids] == [1, 1, 1, 1]
+    assert [writes[e] for e in config_ids] == [0, 0, 0, 0, 0]
+    assert writes[cover_id] == 4
+
+    # The same packet again changes nothing a sensor shows.
+    handler(louvre)
+    await hass.async_block_till_done()
+    assert [writes[e] for e in channel_ids] == [1, 1, 1, 1]
+    assert writes[cover_id] == 5
 
 
 async def test_screen_cover(

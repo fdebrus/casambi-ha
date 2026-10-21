@@ -60,6 +60,7 @@ from .const import (
 from .entities import (
     CasambiBroadcastUnitEntity,
     CasambiNetworkEntity,
+    CasambiUnitConfigEntity,
     CasambiUnitEntity,
     TypedEntityDescription,
 )
@@ -242,6 +243,10 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
             if c.type == UnitControlType.ONOFF and not c.readonly
         )
 
+    def _snapshot(self) -> object:
+        """Write only when the relay state or availability changed."""
+        return (self.is_on, self.available)
+
     @property
     def is_on(self) -> bool:
         """Return True if the relay is on."""
@@ -260,7 +265,7 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
         )
 
 
-class CasambiSunTrackingSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
+class CasambiSunTrackingSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEntity):
     """Enables automatic sun tracking for a louvre unit.
 
     While on, the louvre angle follows the sun so that the slats block
@@ -268,7 +273,6 @@ class CasambiSunTrackingSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
     temperature control switch adds a temperature-dependent bias.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_is_on = False
 
     def __init__(
@@ -383,7 +387,9 @@ class CasambiSunTrackingSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
         await self._async_casa_command(self._api.casa.setSlider(unit, target_raw))
 
 
-class CasambiTemperatureControlSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
+class CasambiTemperatureControlSwitch(
+    CasambiUnitConfigEntity, SwitchEntity, RestoreEntity
+):
     """Biases the sun tracking of a louvre by temperature.
 
     While on (and sun tracking is on), the louvres tilt toward more shade
@@ -391,7 +397,6 @@ class CasambiTemperatureControlSwitch(CasambiUnitEntity, SwitchEntity, RestoreEn
     sun when it reads below.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_is_on = False
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
@@ -425,7 +430,7 @@ class CasambiTemperatureControlSwitch(CasambiUnitEntity, SwitchEntity, RestoreEn
         self.async_write_ha_state()
 
 
-class CasambiFrostLockSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
+class CasambiFrostLockSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEntity):
     """Keeps a louvre from being opened when it may be frozen.
 
     While on and the temperature source reads below the frost lock
@@ -433,7 +438,6 @@ class CasambiFrostLockSwitch(CasambiUnitEntity, SwitchEntity, RestoreEntity):
     pauses; closing and stopping stay possible. On by default.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_is_on = True
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
@@ -488,6 +492,10 @@ class CasambiSensorEnableSwitch(CasambiBroadcastUnitEntity, SwitchEntity):
         self._obj: Unit
         super().__init__(api, desc, unit)
         self._control = control
+
+    def _snapshot(self) -> object:
+        """Write only when the enable bit or availability changed."""
+        return (self.is_on, self.available)
 
     @property
     def is_on(self) -> bool | None:

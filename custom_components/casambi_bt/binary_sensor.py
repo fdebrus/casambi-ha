@@ -99,6 +99,10 @@ class CasambiPacketBinarySensor(CasambiBroadcastUnitEntity, BinarySensorEntity):
         self._obj: Unit
         super().__init__(api, desc, unit)
 
+    def _snapshot(self) -> object:
+        """Write only when this reading or availability changed."""
+        return (self.is_on, self.available)
+
     @property
     def is_on(self) -> bool | None:
         """Return True if the reading is above the threshold."""
@@ -144,6 +148,10 @@ class CasambiPresenceSensor(CasambiBroadcastUnitEntity, BinarySensorEntity):
         )
         self._obj: Unit
         super().__init__(api, desc, unit)
+
+    def _snapshot(self) -> object:
+        """Write only when presence or availability changed."""
+        return (self.is_on, self.available)
 
     @property
     def is_on(self) -> bool | None:

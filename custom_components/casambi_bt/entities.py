@@ -11,12 +11,20 @@ from CasambiBt import Group as CasambiGroup, Scene as CasambiScene, Unit as Casa
 from homeassistant.core import callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry
-from homeassistant.helpers.entity import DeviceInfo, Entity, EntityDescription
+from homeassistant.helpers.entity import (
+    DeviceInfo,
+    Entity,
+    EntityCategory,
+    EntityDescription,
+)
 
 from . import CasambiApi
 from .const import DOMAIN
 
 _LOGGER: Final = logging.getLogger(__name__)
+
+# Snapshot meaning "write Home Assistant state on every pushed update".
+_ALWAYS_WRITE: Final = object()
 
 # Newer cores link a device to its parent by registry id and deprecate the
 # identifier tuple (`via_device`, removed in 2027.8); older cores only know
@@ -199,6 +207,7 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
     ) -> None:
         """Initialize Casambi Entity."""
         super().__init__(api, description, obj)
+        self._written: object = None
 
     @property
     def unique_id(self) -> str:
@@ -218,6 +227,28 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
         unit = cast("CasambiUnit", self._obj)
         return super().available and unit.online
 
+    def _snapshot(self) -> object:
+        """Return what this entity shows, to skip writes that change nothing.
+
+        A unit pushes its whole state several times a minute (the louvre
+        motor cycles through its sensor channels every few seconds), and
+        every entity of the unit is notified each time. Entities that show
+        only part of that state return a hashable summary of it here, so
+        that a push changing nothing they show is not written to Home
+        Assistant. The default writes on every push.
+        """
+        return _ALWAYS_WRITE
+
+    @callback
+    def _apply_update(self, unit: CasambiUnit) -> None:
+        """Pick up what this entity needs from a pushed state."""
+
+    @callback
+    def async_write_ha_state(self) -> None:
+        """Write the state and remember what was written."""
+        self._written = self._snapshot()
+        super().async_write_ha_state()
+
     @callback
     def _change_callback(self, unit: CasambiUnit) -> None:
         _LOGGER.debug("Handling state change for unit %i", unit.deviceId)
@@ -228,7 +259,13 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
             # This update doesn't have a state.
             # This can happen if the unit isn't online so only look at that part.
             own_unit._online = unit.online  # noqa: SLF001
-        return super()._change_callback(unit)
+        self._apply_update(unit)
+        # The library updates the unit in place before notifying, so the
+        # comparison is against what was last written, not a value read
+        # before the update.
+        current = self._snapshot()
+        if current is _ALWAYS_WRITE or current != self._written:
+            self.async_write_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Run when the unit is about to be added to hass."""
@@ -241,6 +278,21 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
         await super().async_will_remove_from_hass()
         unit = cast("CasambiUnit", self._obj)
         self._api.unregister_unit_updates(unit, self._change_callback)
+
+
+class CasambiUnitConfigEntity(CasambiUnitEntity, metaclass=ABCMeta):
+    """Base for config entities of a unit whose value is not in its state.
+
+    Sun tracking, temperature control, frost lock and their dials belong
+    to the louvre device but keep their own value; the pushed state only
+    tells them whether the unit is online.
+    """
+
+    _attr_entity_category = EntityCategory.CONFIG
+
+    def _snapshot(self) -> object:
+        """Only availability can change for this entity."""
+        return self.available
 
 
 class CasambiBroadcastUnitEntity(CasambiUnitEntity, metaclass=ABCMeta):
