@@ -8,6 +8,8 @@ The integration is `local_push`: the `casambi-bt` library keeps a BLE connection
 
 **Why is there no `DataUpdateCoordinator`?** The coordinator pattern exists to centralize *polling* so that many entities share one fetch cycle. This integration never polls — state arrives as push callbacks from the BLE mesh — so a coordinator would add indirection without benefit. `CasambiApi` already fulfils the coordinator's other role (a single shared connection/state owner). All entity platforms therefore declare `PARALLEL_UPDATES = 0` and `should_poll = False`.
 
+**State writes.** A unit pushes its whole state several times a minute — the louvre motor cycles through its four sensor channels every few seconds — and every entity of the unit is notified each time. `CasambiUnitEntity._change_callback` therefore writes to Home Assistant only when the entity's `_snapshot()` differs from what it last wrote: a channel sensor returns its value, a relay its bit, the automation switches and dials (`CasambiUnitConfigEntity`) only their availability, since their value is not in the pushed state. Entities that show the whole state (covers, lights) keep the default and write on every push. Entities that need to decode a push before deciding override `_apply_update()` rather than `_change_callback`.
+
 The integration status against the Home Assistant [integration quality scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/) is tracked in `custom_components/casambi_bt/quality_scale.yaml`.
 
 ## Connection handling

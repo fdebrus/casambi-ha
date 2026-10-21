@@ -180,20 +180,19 @@ class CasambiLouvreChannelSensor(CasambiUnitEntity, SensorEntity):
             self._attr_entity_category = spec.category
             self._attr_icon = spec.icon
         self._value: int | None = None
-        self._decode()
+        self._apply_update(unit)
 
-    def _decode(self) -> None:
-        """Pick up the value if the current state carries this channel."""
-        state = self._obj.state
+    @callback
+    def _apply_update(self, unit: Unit) -> None:
+        """Pick up the value if the pushed state carries this channel."""
+        state = unit.state
         decoded = decode_louvre_channel(state.raw_state if state else None)
         if decoded is not None and decoded[0] == self._channel:
             self._value = decoded[1]
 
-    @callback
-    def _change_callback(self, unit: Unit) -> None:
-        super()._change_callback(unit)
-        self._decode()
-        self.async_write_ha_state()
+    def _snapshot(self) -> object:
+        """Write only when this channel's value or availability changed."""
+        return (self._value, self.available)
 
     @property
     def native_value(self) -> int | None:
@@ -215,6 +214,10 @@ class CasambiPacketSensor(CasambiBroadcastUnitEntity, SensorEntity):
         )
         self._obj: Unit
         super().__init__(api, desc, unit)
+
+    def _snapshot(self) -> object:
+        """Write only when this reading or availability changed."""
+        return (self.native_value, self.available)
 
     @property
     def native_value(self) -> float | None:
@@ -265,6 +268,10 @@ class CasambiLuxSensor(CasambiBroadcastUnitEntity, SensorEntity):
         )
         self._obj: Unit
         super().__init__(api, desc, unit)
+
+    def _snapshot(self) -> object:
+        """Write only when the illuminance or availability changed."""
+        return (self.native_value, self.available)
 
     @property
     def native_value(self) -> int | None:

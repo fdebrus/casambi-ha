@@ -16,7 +16,6 @@ from homeassistant.components.number import (
 )
 from homeassistant.const import DEGREE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
@@ -25,6 +24,7 @@ from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, entry_option
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
+    CasambiUnitConfigEntity,
     CasambiUnitEntity,
     TypedEntityDescription,
 )
@@ -68,14 +68,13 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class CasambiSunOffsetNumber(CasambiUnitEntity, RestoreNumber):
+class CasambiSunOffsetNumber(CasambiUnitConfigEntity, RestoreNumber):
     """Sun preference for the sun tracking of a louvre unit.
 
     Positive values tilt the louvres toward more sun, negative values
     toward more shade. Used by the sun tracking switch.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_mode = NumberMode.SLIDER
     _attr_native_min_value = -45
     _attr_native_max_value = 45
@@ -106,14 +105,13 @@ class CasambiSunOffsetNumber(CasambiUnitEntity, RestoreNumber):
         self.async_write_ha_state()
 
 
-class CasambiTempSetpointNumber(CasambiUnitEntity, RestoreNumber):
+class CasambiTempSetpointNumber(CasambiUnitConfigEntity, RestoreNumber):
     """Temperature setpoint for the temperature control of a louvre unit.
 
     Above the setpoint the louvres tilt toward more shade, below toward
     more sun. Used by the temperature control switch.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
     _attr_mode = NumberMode.SLIDER
     _attr_device_class = NumberDeviceClass.TEMPERATURE
     _attr_native_min_value = 15
