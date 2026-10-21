@@ -3,6 +3,7 @@
 from unittest.mock import MagicMock, patch
 
 from CasambiBt import Unit
+from CasambiBt.errors import BluetoothError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -546,3 +547,92 @@ async def test_frost_lock(
         blocking=True,
     )
     mock_casambi.setSlider.assert_awaited_once()
+
+
+async def test_weather_protection_retries_failed_commands(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a protective command that fails is sent again.
+
+    With the link down during a gust the retract used to be lost until the
+    wind dropped and rose again.
+    """
+    mock_casambi.units = [
+        u for u in mock_casambi.units if u.uuid != SENSOR_PLATFORM_UUID
+    ]
+    kmh = {ATTR_UNIT_OF_MEASUREMENT: "km/h"}
+    hass.states.async_set(WIND_ENTITY, "10", kmh)
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_WIND_ENTITY: WIND_ENTITY}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    api = mock_config_entry.runtime_data
+    protection_id = _entity_id(
+        hass, "switch", f"{mock_casambi.networkId}-weather-protection"
+    )
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+
+    # The gust arrives while the Bluetooth link is failing.
+    mock_casambi.setLevel.side_effect = BluetoothError
+    mock_casambi.setSlider.side_effect = BluetoothError
+    hass.states.async_set(WIND_ENTITY, "40", kmh)
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_awaited_once()
+    mock_casambi.setSlider.assert_awaited_once()
+    assert api.wind_active is True
+
+    # The next reading, still above the threshold, sends them again.
+    mock_casambi.setLevel.reset_mock()
+    mock_casambi.setSlider.reset_mock()
+    mock_casambi.setLevel.side_effect = None
+    mock_casambi.setSlider.side_effect = None
+    hass.states.async_set(WIND_ENTITY, "41", kmh)
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_awaited_once()
+    mock_casambi.setSlider.assert_awaited_once()
+
+    # Once sent, a further reading does not repeat them.
+    hass.states.async_set(WIND_ENTITY, "42", kmh)
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_awaited_once()
+
+    # A failure followed by the link coming back is retried from the
+    # connection update.
+    mock_casambi.setLevel.reset_mock()
+    mock_casambi.setSlider.reset_mock()
+    mock_casambi.setLevel.side_effect = BluetoothError
+    mock_casambi.setSlider.side_effect = BluetoothError
+    hass.states.async_set(WIND_ENTITY, "20", kmh)
+    hass.states.async_set(WIND_ENTITY, "45", kmh)
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_awaited_once()
+    mock_casambi.setLevel.reset_mock()
+    mock_casambi.setSlider.reset_mock()
+    mock_casambi.setLevel.side_effect = None
+    mock_casambi.setSlider.side_effect = None
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_awaited_once()
+    mock_casambi.setSlider.assert_awaited_once()
+
+    # A pending command is dropped once the wind has passed.
+    mock_casambi.setLevel.reset_mock()
+    mock_casambi.setLevel.side_effect = BluetoothError
+    hass.states.async_set(WIND_ENTITY, "20", kmh)
+    hass.states.async_set(WIND_ENTITY, "50", kmh)
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.reset_mock()
+    mock_casambi.setLevel.side_effect = None
+    hass.states.async_set(WIND_ENTITY, "5", kmh)
+    await hass.async_block_till_done()
+    assert api.wind_active is False
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_not_awaited()

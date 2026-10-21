@@ -572,6 +572,21 @@ class CasambiScreenCover(CasambiMotorCover):
         super()._change_callback(unit)
 
     @callback
+    def _connection_callback(self) -> None:
+        """Forget the motion when the link drops.
+
+        The screen may be driven while Home Assistant can't see it, so the
+        last target is no reference for where it is when the link returns:
+        the first state pushed after a reconnect is taken as rest.
+        """
+        if not self._api.available:
+            self._target = None
+            self._move_start = None
+            self._button_run = False
+            self._stop_ticking()
+        super()._connection_callback()
+
+    @callback
     def _tick(self, _now: Any) -> None:
         """Refresh the estimated position while the screen moves."""
         if not self._moving():

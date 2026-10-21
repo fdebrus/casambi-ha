@@ -5,14 +5,15 @@
             "bluetooth_error": "Bluetooth lijkt niet goed te werken.",
             "cannot_connect": "Kon geen verbinding maken",
             "invalid_auth": "Foutieve authenticatie",
+            "not_supported": "Dit apparaat is geen verbindbaar Casambi netwerk.",
             "reauth_successful": "Her-authenticatie was succesvol",
             "reconfigure_successful": "Herconfiguratie was succesvol",
-            "wrong_network": "Het adres hoort niet bij het geconfigureerde Casambi netwerk.",
-            "unknown": "Onverwachte fout"
+            "unknown": "Onverwachte fout",
+            "wrong_network": "Het adres hoort niet bij het geconfigureerde Casambi netwerk."
         },
         "error": {
             "cannot_connect": "Kon geen verbinding maken",
-            "invalid_address": "The bluetooth MAC address of the network is invalid.",
+            "invalid_address": "Het bluetooth MAC-adres van het netwerk is ongeldig.",
             "invalid_auth": "Foutieve authenticatie",
             "unknown": "Onverwachte fout"
         },
@@ -33,7 +34,14 @@
                     "password": "Wachtwoord",
                     "vertical_as_cover": "Verticale bediening als scherm aanmaken (bijv. pergola-lamellen)?"
                 },
-                "title": "Configureer uw Casambi netwerk"
+                "title": "Configureer uw Casambi netwerk",
+                "description": "Het bluetooth MAC-adres (Network ID) vind je in de details van je lampen in de Casambi app."
+            },
+            "reauth_confirm": {
+                "data": {
+                    "password": "Wachtwoord"
+                },
+                "title": "Bevestig het wachtwoord van je netwerk."
             }
         }
     },

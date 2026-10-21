@@ -834,3 +834,54 @@ async def test_screen_travel_time_per_direction(
     entity._travel_ms = {1: 40000, 2: 20000}  # noqa: SLF001
     assert entity._travel_seconds(extending=True) == 20.0  # noqa: SLF001
     assert entity._travel_seconds(extending=False) == 40.0  # noqa: SLF001
+
+
+async def test_screen_forgets_motion_when_the_link_drops(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a reconnect does not animate a move from a stale target."""
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        api = mock_config_entry.runtime_data
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        await report("818b080000")
+        clock[0] = 1040.0
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+        await hass.async_block_till_done()
+
+        # A close starts, then the link drops mid-travel.
+        await report("818b08f00f")
+        assert hass.states.get(entity_id).state == "closing"
+        clock[0] += 5
+        mock_casambi.connected = False
+        api._notify_connection_state()  # noqa: SLF001
+        await hass.async_block_till_done()
+        assert hass.states.get(entity_id).state == "unavailable"
+
+        # Back after a while: the screen was driven meanwhile and now reports
+        # the retracted end. That is taken as rest, not as a 35 s opening.
+        clock[0] += 600
+        mock_casambi.connected = True
+        api._notify_connection_state()  # noqa: SLF001
+        await report("818b080000")
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 100

@@ -129,10 +129,19 @@ class CasambiButtonEventEntity(EventEntity):
         self._pending = event
 
     async def async_added_to_hass(self) -> None:
-        """Process the triggering event once the entity is registered."""
+        """Follow the connection and process the triggering event."""
+        self._api.register_connection_updates(self._connection_callback)
         if self._pending is not None:
             self.handle_event(self._pending)
             self._pending = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Stop following the connection."""
+        self._api.unregister_connection_updates(self._connection_callback)
+
+    @callback
+    def _connection_callback(self) -> None:
+        self.async_write_ha_state()
 
     @callback
     def handle_event(self, event: SwitchEvent) -> None:
