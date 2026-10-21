@@ -25,7 +25,13 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
-from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, DOMAIN, entry_option
+from .const import (
+    CASA_RAW_MAX,
+    CONF_IMPORT_GROUPS,
+    CONF_VERTICAL_AS_COVER,
+    DOMAIN,
+    entry_option,
+)
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -38,8 +44,6 @@ _LOGGER = logging.getLogger(__name__)
 
 # State is pushed by the Casambi network, no coordinated polling is required.
 PARALLEL_UPDATES = 0
-
-CASA_RAW_MAX: Final = 255
 
 # Winsol SO! screens report their full-range travel times in milliseconds,
 # measured by the motor's calibration run. The fixture (27814) names sensor
@@ -99,6 +103,13 @@ async def async_setup_entry(
 class CasambiCover(CasambiEntity, CoverEntity, metaclass=ABCMeta):
     """Defines a Casambi cover entity base class."""
 
+    _attr_device_class = CoverDeviceClass.BLIND
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN
+        | CoverEntityFeature.CLOSE
+        | CoverEntityFeature.SET_POSITION
+    )
+
     def __init__(
         self,
         api: CasambiApi,
@@ -106,14 +117,6 @@ class CasambiCover(CasambiEntity, CoverEntity, metaclass=ABCMeta):
         obj: Group | Unit,
     ) -> None:
         """Initialize a Casambi cover entity base class."""
-
-        self._attr_device_class = CoverDeviceClass.BLIND
-        self._attr_supported_features = (
-            CoverEntityFeature.OPEN
-            | CoverEntityFeature.CLOSE
-            | CoverEntityFeature.SET_POSITION
-        )
-
         self._obj: Group | Unit
         super().__init__(api, description, obj)
 
@@ -235,9 +238,7 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             None,
         )
         if self._toggle_control is not None:
-            self._attr_supported_features = (
-                self._attr_supported_features or CoverEntityFeature(0)
-            ) | CoverEntityFeature.STOP
+            self._attr_supported_features |= CoverEntityFeature.STOP
 
         # Direction of the last run (raw position rising) and the position
         # the motor last rested at, to predict where the bit sends it.
@@ -295,10 +296,10 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
     async def _drive_to_end(self, raw_end: int) -> None:
         """Run to an end like the wall button when the bit goes that way."""
         control = self._toggle_control
-        raising = raw_end > (self._rest_raw if self._rest_raw is not None else -1)
+        raising = raw_end == CASA_RAW_MAX
         if control is not None:
             if self._toggle_running():
-                if self._last_raising == (raw_end == CASA_RAW_MAX):
+                if self._last_raising == raising:
                     return
                 # Like pressing the button twice: stop, then run back.
                 await self._async_casa_command(
@@ -438,17 +439,22 @@ class CasambiScreenCover(CasambiMotorCover):
     """
 
     _attr_device_class = CoverDeviceClass.SHADE
+    # Stop is always possible: a run started with a position command is
+    # stopped with another position, whether or not the unit has the bit.
+    _attr_supported_features = (
+        CoverEntityFeature.OPEN
+        | CoverEntityFeature.CLOSE
+        | CoverEntityFeature.SET_POSITION
+        | CoverEntityFeature.STOP
+    )
+
+    # The dimmer counts how far the screen is extended.
+    _raw_open = 0
+    _raw_closed = CASA_RAW_MAX
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a screen cover entity."""
         super().__init__(api, unit)
-        self._attr_device_class = CoverDeviceClass.SHADE
-        self._attr_supported_features = (
-            CoverEntityFeature.OPEN
-            | CoverEntityFeature.CLOSE
-            | CoverEntityFeature.SET_POSITION
-            | CoverEntityFeature.STOP
-        )
         self._travel_ms: dict[int, int] = {}
         self._target: int | None = None
         self._move_from = 0.0
@@ -541,9 +547,6 @@ class CasambiScreenCover(CasambiMotorCover):
             return False
         return self._start_motion(target, now)
 
-    _raw_open = 0
-    _raw_closed = CASA_RAW_MAX
-
     def _raw_position(self, unit: Unit) -> int | None:
         return unit.state.dimmer if unit.state is not None else None
 
@@ -558,8 +561,7 @@ class CasambiScreenCover(CasambiMotorCover):
         """
         if not hasattr(self, "_target"):
             return
-        self._was_running = self._toggle_running(unit)
-        if self._was_running or self._moving():
+        if self._toggle_running(unit) or self._moving():
             return
         self._rest_raw = self._target
 

@@ -31,6 +31,11 @@ DEFAULT_LOUVRE_AZIMUTH: Final = 180
 DEFAULT_WIND_THRESHOLD: Final = 35
 # Below this temperature (°C) the louvres may be frozen to their seals.
 DEFAULT_FROST_LOCK_TEMPERATURE: Final = 2.0
+# Setpoint (°C) of the temperature control until the dial is moved.
+DEFAULT_TEMP_SETPOINT: Final = 22.0
+
+# Full scale of the 8-bit raw values the library exchanges with the units.
+CASA_RAW_MAX: Final = 255
 
 EVENT_BUTTON: Final = f"{DOMAIN}_button_event"
 

@@ -58,7 +58,8 @@ class InputStreamSwitchEventDecoder(SwitchEventDecoder):
         """
         super().__init__(*args, **kwargs)
         # Units seen on the 0x06 button stream; their 0x12 PRESS / RELEASE
-        # stay ignored as in the library. Kept across reset() on purpose.
+        # stay ignored as in the library. The client builds a new decoder
+        # on every connect, so this is learnt again after a reconnect.
         self._button_stream_units: set[int] = set()
 
     def decode(self, data: bytes, packet_seq: int) -> list[SwitchEvent]:

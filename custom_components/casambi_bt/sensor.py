@@ -73,7 +73,6 @@ class LouvreChannel:
     unit: str | None = None
     state_class: SensorStateClass = SensorStateClass.MEASUREMENT
     category: EntityCategory | None = EntityCategory.DIAGNOSTIC
-    icon: str | None = None
 
 
 # From the fixture definition (sensor tag = channel - 1). Confirmed on a
@@ -91,14 +90,12 @@ LOUVRE_CHANNELS: Final[dict[int, LouvreChannel]] = {
     2: LouvreChannel(
         key="louvre_overcurrent",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:flash-alert",
     ),
     3: LouvreChannel(
         key="louvre_travel_distance",
         state_class=SensorStateClass.TOTAL_INCREASING,
-        icon="mdi:counter",
     ),
-    4: LouvreChannel(key="louvre_module_state", icon="mdi:state-machine"),
+    4: LouvreChannel(key="louvre_module_state"),
 }
 
 
@@ -172,13 +169,11 @@ class CasambiLouvreChannelSensor(CasambiUnitEntity, SensorEntity):
             self._attr_translation_placeholders = {"channel": str(channel)}
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
             self._attr_state_class = SensorStateClass.MEASUREMENT
-            self._attr_icon = "mdi:numeric"
         else:
             self._attr_device_class = spec.device_class
             self._attr_native_unit_of_measurement = spec.unit
             self._attr_state_class = spec.state_class
             self._attr_entity_category = spec.category
-            self._attr_icon = spec.icon
         self._value: int | None = None
         self._apply_update(unit)
 
@@ -245,7 +240,6 @@ class CasambiWindSensor(CasambiPacketSensor):
 class CasambiSolarSensor(CasambiPacketSensor):
     """The solar radiation reading of a Casambi sensor platform."""
 
-    _attr_icon = "mdi:weather-sunny"
     _packet_type = PACKET_SOLAR
     _divisor = 4.0
 

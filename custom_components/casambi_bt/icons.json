@@ -4,6 +4,23 @@
       "vertical": {
         "default": "mdi:arrow-up-down"
       }
+    },
+    "sensor": {
+      "louvre_channel": {
+        "default": "mdi:numeric"
+      },
+      "louvre_module_state": {
+        "default": "mdi:state-machine"
+      },
+      "louvre_overcurrent": {
+        "default": "mdi:flash-alert"
+      },
+      "louvre_travel_distance": {
+        "default": "mdi:counter"
+      },
+      "solar": {
+        "default": "mdi:weather-sunny"
+      }
     }
   }
 }

@@ -50,8 +50,9 @@ rules:
   test-coverage:
     status: done
     comment: |
-      Config flow, setup/unload, and the cover, light, number, and scene
-      platforms are covered by tests run in CI on every push.
+      Config flow, setup/unload, reconnects, diagnostics, every platform
+      and the pergola automation are covered by tests run in CI on every
+      push, against the oldest and the newest supported core.
 
   # Gold
   devices: done
@@ -71,12 +72,12 @@ rules:
   docs-troubleshooting: done
   docs-use-cases: done
   dynamic-devices:
-    status: done
+    status: todo
     comment: |
-      The network configuration is re-fetched on reconnect; when the unit
-      list changed, the config entry reloads itself so entities match.
-      Wall switch button entities are additionally discovered dynamically
-      at runtime.
+      Wall switch button entities are discovered at runtime, on their first
+      press. Units added in the Casambi app are not: the library fetches the
+      network configuration once, on the first connect, and keeps it across
+      reconnects, so they appear after a reload of the config entry.
   entity-category: done
   entity-device-class: done
   entity-disabled-by-default:
@@ -87,14 +88,17 @@ rules:
   icon-translations: done
   reconfiguration-flow: done
   repair-issues:
-    status: exempt
-    comment: No repairable situations beyond reauth, which is implemented.
+    status: done
+    comment: |
+      A motor with an untested control layout (e.g. the Winsol Lamel
+      Intelligent) gets no entities and a repair issue explaining why,
+      cleared when the entry unloads. A changed password starts reauth.
   stale-devices:
     status: done
     comment: |
-      When the unit list changes the entry reloads, so stale entities stop
-      being provided; async_remove_config_entry_device allows deleting the
-      leftover devices from the UI.
+      Units removed in the Casambi app stop being provided after a reload;
+      async_remove_config_entry_device allows deleting their leftover
+      devices from the UI.
 
   # Platinum
   async-dependency: done

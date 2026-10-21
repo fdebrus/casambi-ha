@@ -3,7 +3,6 @@
 from abc import ABCMeta
 from collections.abc import Coroutine
 from dataclasses import dataclass
-import logging
 from typing import Any, Final, cast
 
 from CasambiBt import Group as CasambiGroup, Scene as CasambiScene, Unit as CasambiUnit
@@ -20,8 +19,6 @@ from homeassistant.helpers.entity import (
 
 from . import CasambiApi
 from .const import DOMAIN
-
-_LOGGER: Final = logging.getLogger(__name__)
 
 # Snapshot meaning "write Home Assistant state on every pushed update".
 _ALWAYS_WRITE: Final = object()
@@ -167,23 +164,6 @@ class CasambiNetworkGroup(CasambiNetworkEntity, metaclass=ABCMeta):
             unit.online for unit in self._unit_map.values()
         )
 
-    @callback
-    def _change_callback(self, unit: CasambiUnit) -> None:
-        group = cast("CasambiGroup", self._obj)
-        _LOGGER.debug(
-            "Handling state change for unit %i in group %i",
-            unit.deviceId,
-            group.groudId,
-        )
-        if unit.state:
-            self._unit_map[unit.deviceId] = unit
-        else:
-            own_unit = self._unit_map[unit.deviceId]
-            # This update doesn't have a state.
-            # This can happen if the unit isn't online so only look at that part.
-            own_unit._online = unit.online  # noqa: SLF001
-        return super()._change_callback(unit)
-
     async def async_added_to_hass(self) -> None:
         """Run when the group is about to be added to hass."""
         await super().async_added_to_hass()
@@ -251,18 +231,10 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
 
     @callback
     def _change_callback(self, unit: CasambiUnit) -> None:
-        _LOGGER.debug("Handling state change for unit %i", unit.deviceId)
-        if unit.state:
-            self._obj = unit
-        else:
-            own_unit = cast("CasambiUnit", self._obj)
-            # This update doesn't have a state.
-            # This can happen if the unit isn't online so only look at that part.
-            own_unit._online = unit.online  # noqa: SLF001
+        # The library updates the unit (the very object this entity holds)
+        # in place before notifying, so the comparison is against what was
+        # last written, not a value read before the update.
         self._apply_update(unit)
-        # The library updates the unit in place before notifying, so the
-        # comparison is against what was last written, not a value read
-        # before the update.
         current = self._snapshot()
         if current is _ALWAYS_WRITE or current != self._written:
             self.async_write_ha_state()

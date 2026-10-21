@@ -58,7 +58,8 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: CasambiConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    casa = entry.runtime_data.casa
+    api = entry.runtime_data
+    casa = api.casa
 
     return {
         "entry": {
@@ -69,6 +70,18 @@ async def async_get_config_entry_diagnostics(
             "id": casa.networkId,
             "name": casa.networkName,
             "connected": casa.connected,
+            "available": api.available,
+        },
+        # The state of the pergola automation, keyed by louvre uuid where
+        # it is per unit.
+        "automation": {
+            "rain_active": api.rain_active,
+            "wind_active": api.wind_active,
+            "last_temperature": api.last_temperature,
+            "sun_offsets": dict(api.sun_offsets),
+            "temp_control": dict(api.temp_control),
+            "temp_setpoints": dict(api.temp_setpoints),
+            "frost_lock": dict(api.frost_lock),
         },
         "units": [
             {

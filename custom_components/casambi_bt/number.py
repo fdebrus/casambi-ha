@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import ABCMeta
+from abc import ABCMeta, abstractmethod
 import logging
 
 from CasambiBt import Group, Unit, UnitControlType
@@ -20,7 +20,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
 from .classify import UnitKind, classify_unit
-from .const import CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER, entry_option
+from .const import (
+    CONF_IMPORT_GROUPS,
+    CONF_VERTICAL_AS_COVER,
+    DEFAULT_TEMP_SETPOINT,
+    entry_option,
+)
 from .entities import (
     CasambiEntity,
     CasambiNetworkGroup,
@@ -68,14 +73,43 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class CasambiSunOffsetNumber(CasambiUnitConfigEntity, RestoreNumber):
+class CasambiLouvreSettingNumber(CasambiUnitConfigEntity, RestoreNumber):
+    """A dial of the louvre automation whose value survives a restart.
+
+    The value is shared with the automation switches through a dict on
+    the api, keyed by unit uuid, which subclasses name in ``_values``.
+    """
+
+    _attr_mode = NumberMode.SLIDER
+    _obj: Unit
+
+    @property
+    @abstractmethod
+    def _values(self) -> dict[str, float]:
+        """Return the shared dict this dial writes to."""
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous value."""
+        await super().async_added_to_hass()
+        last_number_data = await self.async_get_last_number_data()
+        if last_number_data is not None and last_number_data.native_value is not None:
+            self._attr_native_value = last_number_data.native_value
+            self._values[self._obj.uuid] = last_number_data.native_value
+
+    async def async_set_native_value(self, value: float) -> None:
+        """Set the value."""
+        self._attr_native_value = value
+        self._values[self._obj.uuid] = value
+        self.async_write_ha_state()
+
+
+class CasambiSunOffsetNumber(CasambiLouvreSettingNumber):
     """Sun preference for the sun tracking of a louvre unit.
 
     Positive values tilt the louvres toward more sun, negative values
     toward more shade. Used by the sun tracking switch.
     """
 
-    _attr_mode = NumberMode.SLIDER
     _attr_native_min_value = -45
     _attr_native_max_value = 45
     _attr_native_step = 1
@@ -87,38 +121,26 @@ class CasambiSunOffsetNumber(CasambiUnitConfigEntity, RestoreNumber):
         desc = TypedEntityDescription(
             key=unit.uuid, entity_type="sun-offset", translation_key="sun_offset"
         )
-        self._obj: Unit
         super().__init__(api, desc, unit)
 
-    async def async_added_to_hass(self) -> None:
-        """Restore the previous offset."""
-        await super().async_added_to_hass()
-        last_number_data = await self.async_get_last_number_data()
-        if last_number_data is not None and last_number_data.native_value is not None:
-            self._attr_native_value = last_number_data.native_value
-            self._api.sun_offsets[self._obj.uuid] = last_number_data.native_value
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set the sun offset."""
-        self._attr_native_value = value
-        self._api.sun_offsets[self._obj.uuid] = value
-        self.async_write_ha_state()
+    @property
+    def _values(self) -> dict[str, float]:
+        return self._api.sun_offsets
 
 
-class CasambiTempSetpointNumber(CasambiUnitConfigEntity, RestoreNumber):
+class CasambiTempSetpointNumber(CasambiLouvreSettingNumber):
     """Temperature setpoint for the temperature control of a louvre unit.
 
     Above the setpoint the louvres tilt toward more shade, below toward
     more sun. Used by the temperature control switch.
     """
 
-    _attr_mode = NumberMode.SLIDER
     _attr_device_class = NumberDeviceClass.TEMPERATURE
     _attr_native_min_value = 15
     _attr_native_max_value = 30
     _attr_native_step = 0.5
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
-    _attr_native_value = 22.0
+    _attr_native_value = DEFAULT_TEMP_SETPOINT
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a temperature setpoint entity."""
@@ -127,22 +149,11 @@ class CasambiTempSetpointNumber(CasambiUnitConfigEntity, RestoreNumber):
             entity_type="temp-setpoint",
             translation_key="temp_setpoint",
         )
-        self._obj: Unit
         super().__init__(api, desc, unit)
 
-    async def async_added_to_hass(self) -> None:
-        """Restore the previous setpoint."""
-        await super().async_added_to_hass()
-        last_number_data = await self.async_get_last_number_data()
-        if last_number_data is not None and last_number_data.native_value is not None:
-            self._attr_native_value = last_number_data.native_value
-            self._api.temp_setpoints[self._obj.uuid] = last_number_data.native_value
-
-    async def async_set_native_value(self, value: float) -> None:
-        """Set the temperature setpoint."""
-        self._attr_native_value = value
-        self._api.temp_setpoints[self._obj.uuid] = value
-        self.async_write_ha_state()
+    @property
+    def _values(self) -> dict[str, float]:
+        return self._api.temp_setpoints
 
 
 class TypedNumberEntityDescription(TypedEntityDescription, NumberEntityDescription):

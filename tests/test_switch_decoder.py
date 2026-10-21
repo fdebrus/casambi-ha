@@ -108,16 +108,6 @@ def test_enocean_switch_not_doubled() -> None:
     ]
 
 
-def test_known_button_stream_unit_survives_reset() -> None:
-    """Test that a reconnect does not forget which units use 0x06."""
-    decoder = InputStreamSwitchEventDecoder()
-    _decode(decoder, _frame(29, 0x0200, 0x06, "00"))
-    decoder.reset()
-
-    # A lone 0x12 press from that unit (its 0x06 copy lost) stays ignored.
-    assert _decode(decoder, _frame(64, 0x0201, 0x12, "0100")) == []
-
-
 def test_install_replaces_client_decoder() -> None:
     """Test that new library clients build the input-aware decoder."""
     install()

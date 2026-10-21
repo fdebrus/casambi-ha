@@ -70,10 +70,6 @@ async def async_setup_entry(
 class CasambiBinarySensorEntity(BinarySensorEntity, CasambiNetworkEntity):
     """Defines a Casambi Binary Sensor Entity."""
 
-    def __init__(self, api: CasambiApi, description: BinarySensorEntityDescription):
-        """Initialize a Casambi Binary Sensor Entity."""
-        super().__init__(api=api, description=description)
-
     @property
     def is_on(self) -> bool:
         """Getter for state."""

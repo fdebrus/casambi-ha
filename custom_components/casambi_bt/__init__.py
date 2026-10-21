@@ -200,7 +200,8 @@ class CasambiApi:
         self.rain_active = False
         self.wind_active = False
         self.frost_lock: dict[str, bool] = {}
-        self._last_temperature: float | None = None
+        # Last numeric reading of the temperature source, for the frost lock.
+        self.last_temperature: float | None = None
         # Registry id of the network device, set once it has been created so
         # that unit devices can be linked to it.
         self.network_device_id: str | None = None
@@ -213,7 +214,6 @@ class CasambiApi:
         # Set once disconnect() starts: no reconnect may be scheduled after.
         self._closing = False
         self._handlers_registered = False
-        self._unit_snapshot: frozenset[str] | None = None
 
     def _register_bluetooth_callback(self) -> None:
         self._cancel_bluetooth_callback = bluetooth.async_register_callback(
@@ -245,7 +245,6 @@ class CasambiApi:
 
             await self._casa.connect(device, self.password)
             self._link_up = True
-            self._check_network_changes()
         except (BluetoothDeviceNotFoundError, NetworkNotFoundError) as err:
             raise ConfigEntryNotReady(
                 f"Network with address {self.address} wasn't found"
@@ -353,7 +352,6 @@ class CasambiApi:
                         self.address,
                     )
                 self._link_up = True
-                self._check_network_changes()
                 self._notify_connection_state()
                 return
 
@@ -369,25 +367,6 @@ class CasambiApi:
 
             await asyncio.sleep(backoff)
             backoff = min(RECONNECT_BACKOFF_MAX, backoff * RECONNECT_BACKOFF_STEP)
-
-    @callback
-    def _check_network_changes(self) -> None:
-        """Reload the config entry if units were added or removed.
-
-        The network configuration is re-fetched on every connect, so a
-        reconnect may reveal units that were added or removed via the
-        Casambi app. A reload recreates the entities to match.
-        """
-        snapshot = frozenset(unit.uuid for unit in self._casa.units)
-        if self._unit_snapshot is None:
-            self._unit_snapshot = snapshot
-            return
-        if snapshot != self._unit_snapshot:
-            _LOGGER.info(
-                "Units in the Casambi network %s changed; reloading", self.address
-            )
-            self._unit_snapshot = snapshot
-            self.hass.config_entries.async_schedule_reload(self.conf_entry.entry_id)
 
     @property
     def available(self) -> bool:
@@ -410,16 +389,16 @@ class CasambiApi:
         state = self.hass.states.get(entity_id)
         if state is not None:
             with contextlib.suppress(ValueError):
-                self._last_temperature = float(state.state)
-        if self._last_temperature is None:
+                self.last_temperature = float(state.state)
+        if self.last_temperature is None:
             return None
         threshold = entry_option(
             self.conf_entry,
             CONF_FROST_LOCK_TEMPERATURE,
             DEFAULT_FROST_LOCK_TEMPERATURE,
         )
-        if self._last_temperature < threshold:
-            return self._last_temperature
+        if self.last_temperature < threshold:
+            return self.last_temperature
         return None
 
     def get_units(
