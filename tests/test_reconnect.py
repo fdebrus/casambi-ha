@@ -7,7 +7,6 @@ from CasambiBt.errors import AuthenticationError, BluetoothError, ProtocolError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.casambi_bt import CasambiApi
 from custom_components.casambi_bt.const import (
     DOMAIN,
     RECONNECT_BACKOFF_MAX,
@@ -21,14 +20,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 
-from .conftest import LIGHT_UUID, NETWORK_ID
-
-
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> CasambiApi:
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-    return entry.runtime_data
+from .conftest import LIGHT_UUID, NETWORK_ID, setup_entry as _setup
 
 
 def _disconnect_callback(mock_casambi: MagicMock):

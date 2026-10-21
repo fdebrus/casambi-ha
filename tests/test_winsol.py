@@ -47,33 +47,23 @@ from .conftest import (
     WINSOL_RELAY_UUID,
     WINSOL_SCREEN_UUID,
     WINSOL_STAR_LOUVRE_UUID,
+    entity_id_for as _entity_id,
     make_light_unit,
-    make_louvre_unit,
     make_sensor_platform_unit,
+    make_vertical_light_unit,
     make_winsol_louvre_unit,
     make_winsol_relay_unit,
     make_winsol_screen_unit,
     make_winsol_star_louvre_unit,
+    setup_entry as _setup,
+    unit_by_uuid,
 )
-
-
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-def _entity_id(hass: HomeAssistant, domain: str, unique_id: str) -> str:
-    registry = er.async_get(hass)
-    entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
-    assert entity_id is not None, f"missing entity for {unique_id}"
-    return entity_id
 
 
 def test_classification() -> None:
     """Test that units are classified by their control layout."""
     assert classify_unit(make_light_unit()) is UnitKind.LIGHT
-    assert classify_unit(make_louvre_unit()) is UnitKind.LIGHT
+    assert classify_unit(make_vertical_light_unit()) is UnitKind.LIGHT
     assert classify_unit(make_winsol_louvre_unit()) is UnitKind.LOUVRE
     assert classify_unit(make_winsol_screen_unit()) is UnitKind.SCREEN
     assert classify_unit(make_winsol_relay_unit()) is UnitKind.RELAY
@@ -189,7 +179,7 @@ async def test_relay_switch(
     mock_casambi.setLevel.assert_not_awaited()
 
     # The network reports the relay closed.
-    relay = next(u for u in mock_casambi.units if u.uuid == WINSOL_RELAY_UUID)
+    relay = unit_by_uuid(mock_casambi, WINSOL_RELAY_UUID)
     relay.state.onoff = True
     mock_casambi.registerUnitChangedHandler.call_args.args[0](relay)
     await hass.async_block_till_done()
@@ -276,7 +266,7 @@ async def test_louvre_cover(
     mock_casambi.setControlValue.assert_not_awaited()
 
     # Running from the wall button (bit 36 set): stop clears the bit.
-    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
     louvre.state._raw_state = bytes.fromhex("1101000010")  # noqa: SLF001
     await hass.services.async_call(
         COVER_DOMAIN,
@@ -336,7 +326,7 @@ async def test_louvre_channel_sensors(
 
     # One full rotation captured on a Winsol Lamel Standard (louvres closed):
     # 17 °C, no overcurrent, travel distance 29, module state 50.
-    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
     handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
     for packet in ("1101000000", "0200000000", "d301000000", "2403000000"):
         louvre.state._raw_state = bytes.fromhex(packet)  # noqa: SLF001
@@ -395,7 +385,7 @@ async def test_louvre_entities_write_only_what_changed(
     hass.bus.async_listen(EVENT_STATE_CHANGED, _count)
     hass.bus.async_listen(EVENT_STATE_REPORTED, _count, event_filter=_any)
 
-    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
     handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
     for packet in ("1101000000", "0200000000", "d301000000", "2403000000"):
         louvre.state._raw_state = bytes.fromhex(packet)  # noqa: SLF001
@@ -466,7 +456,7 @@ async def test_screen_shows_estimated_position_while_moving(
             COVER_DOMAIN,
             f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
         )
-        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
         async def report(packet: str) -> None:
@@ -536,7 +526,7 @@ async def test_screen_button_run(
             COVER_DOMAIN,
             f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
         )
-        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
         async def report(packet: str) -> None:
@@ -611,7 +601,7 @@ async def test_screen_open_close_like_wall_button(
             COVER_DOMAIN,
             f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
         )
-        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
         async def report(packet: str) -> None:
@@ -682,7 +672,7 @@ async def test_louvres_open_close_like_wall_button(
         COVER_DOMAIN,
         f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover",
     )
-    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
     handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
     async def report(packet: str) -> None:
@@ -755,7 +745,7 @@ async def test_screen_stop_aims_ahead(
             hass.states.get(entity_id).attributes["supported_features"]
             & CoverEntityFeature.STOP
         )
-        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
         async def report(packet: str) -> None:
@@ -917,7 +907,7 @@ async def test_screen_forgets_motion_when_the_link_drops(
             COVER_DOMAIN,
             f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
         )
-        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
         async def report(packet: str) -> None:
@@ -971,7 +961,7 @@ async def test_screen_button_stop_keeps_the_run_direction(
             COVER_DOMAIN,
             f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
         )
-        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
         async def report(packet: str) -> None:
@@ -1028,7 +1018,7 @@ async def test_screen_button_run_across_a_link_drop(
             COVER_DOMAIN,
             f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
         )
-        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
         async def report(packet: str) -> None:

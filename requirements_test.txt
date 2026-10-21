@@ -1,17 +1,5 @@
-# Test harness (pins a matching homeassistant version)
+# Oldest core the suite runs on: Home Assistant 2026.2.3, Python 3.13.
+# (Below the 2026.6 minimum of the integration, but the last harness that
+# installs on 3.13; pip pulls bleak 3 into it for casambi-bt.)
 pytest-homeassistant-custom-component==0.13.316
-mypy==2.3.0
-
-# Integration requirement
-casambi-bt==0.4.0b5
-
-# Dependencies of the bluetooth component that the harness does not install
-aiousbwatcher
-bleak-retry-connector
-bluetooth-adapters
-bluetooth-auto-recovery
-bluetooth-data-tools
-dbus-fast
-habluetooth
-pyserial
-pyudev
+-r requirements_test_common.txt

@@ -458,7 +458,7 @@ weather protection are not affected.
 
 To fully decode what a unit (e.g. a Winsol pergola) speaks over BLE, capture two artifacts and correlate them:
 
-1. **The schema — diagnostics download.** With the integration connected, go to Settings → Devices & services → Casambi Bluetooth → three-dot menu → *Download diagnostics*. The `units` section lists every unit's full control table: control type (including raw ids for types the library calls `UNKOWN`), bit offset, bit length, min/max, and the current parsed state. This shows *what channels exist*. The `automation` section shows what the pergola automation currently holds (rain and wind latches, last temperature, the per-louvre switch and dial values), which is what to look at when the louvres don't move as expected.
+1. **The schema — diagnostics download.** With the integration connected, go to Settings → Devices & services → Casambi Bluetooth → three-dot menu → *Download diagnostics*. The `units` section lists every unit's full control table: control type (including raw ids for types the library calls `UNKNOWN`), bit offset, bit length, min/max, and the current parsed state. This shows *what channels exist*. The `automation` section shows what the pergola automation currently holds (rain and wind latches, last temperature, the per-louvre switch and dial values), which is what to look at when the louvres don't move as expected.
 
 2. **The traffic — debug log.** Enable debug logging in `configuration.yaml`:
 
@@ -506,11 +506,13 @@ checked against a temporary test that is not part of the branch.
 ### Supporting several Home Assistant versions
 
 The minimum supported core is 2026.6, the first to ship bleak 3, which
-`casambi-bt` 0.4.0b4 and later require (this fork pins 0.4.0b5) (`hacs.json` enforces it). The test
-requirements still pin the 2026.2.3 harness, the last one installable on
-Python 3.13 as used by CI; pip pulls bleak 3 into it for the library, so the
-suite runs fine there. Two helpers changed in newer cores and the integration
-adapts at import time rather than raising the minimum version further:
+`casambi-bt` 0.4.0b4 and later require (this fork pins 0.4.0b5) (`hacs.json` enforces it). CI runs the
+suite twice: `requirements_test.txt` pins the 2026.2.3 harness on Python 3.13
+(below the minimum, but the last harness that installs on 3.13; pip pulls
+bleak 3 into it for the library) and `requirements_test_latest.txt` the
+2026.10.1 harness on Python 3.14. Two helpers changed in newer cores and the
+integration adapts at import time rather than raising the minimum version
+further:
 
 - `homeassistant.helpers.sun.get_astral_observer` replaces
   `get_astral_location` (removed in 2027.7) — `suntrack.py` uses whichever
@@ -521,10 +523,8 @@ adapts at import time rather than raising the minimum version further:
   when the device is created in `async_setup_entry`, on cores whose
   `DeviceInfo` accepts it.
 
-To run the suite against the newest core as well, create a second venv with
-Python 3.14, install the latest `pytest-homeassistant-custom-component`, and
-add the requirements listed in the `bluetooth`, `bluetooth_adapters` and `usb`
-component manifests of that core (the harness does not install them).
+Locally, one venv per requirements file does the same
+(`python3.14 -m venv venv314 && venv314/bin/pip install -r requirements_test_latest.txt`).
 
 ## Development setup
 
@@ -544,7 +544,7 @@ These instructions assume the following folder layout (after all steps). This ca
 casambi/
 ├── core/
 ├── casambi-bt/
-└── casambi-bt-hass/
+└── casambi-ha/
 ```
 
 ### Getting homeassistant

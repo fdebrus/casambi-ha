@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-from CasambiBt import Unit
 from CasambiBt.errors import BluetoothError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -27,26 +26,16 @@ from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
 
-from .conftest import SENSOR_PLATFORM_UUID, WINSOL_LOUVRE_UUID, WINSOL_SCREEN_UUID
+from .conftest import (
+    SENSOR_PLATFORM_UUID,
+    WINSOL_LOUVRE_UUID,
+    WINSOL_SCREEN_UUID,
+    entity_id_for as _entity_id,
+    setup_entry as _setup,
+    unit_by_uuid,
+)
 
 TEMP_SENSOR = "sensor.terrace_temperature"
-
-
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
-
-
-def _entity_id(hass: HomeAssistant, domain: str, unique_id: str) -> str:
-    registry = er.async_get(hass)
-    entity_id = registry.async_get_entity_id(domain, DOMAIN, unique_id)
-    assert entity_id is not None, f"missing entity for {unique_id}"
-    return entity_id
-
-
-def _get_unit(mock_casambi: MagicMock, uuid: str) -> Unit:
-    return next(u for u in mock_casambi.units if u.uuid == uuid)
 
 
 async def test_temperature_control_biases_tracking(
@@ -116,7 +105,7 @@ async def test_weather_protection_rain_and_wind(
     await _setup(hass, mock_config_entry)
 
     api = mock_config_entry.runtime_data
-    sensor_unit = _get_unit(mock_casambi, SENSOR_PLATFORM_UUID)
+    sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
 
     protection_id = _entity_id(
         hass, "switch", f"{mock_casambi.networkId}-weather-protection"
@@ -188,7 +177,7 @@ async def test_weather_protection_off_does_nothing(
     await _setup(hass, mock_config_entry)
 
     api = mock_config_entry.runtime_data
-    sensor_unit = _get_unit(mock_casambi, SENSOR_PLATFORM_UUID)
+    sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
 
     sensor_unit._sensor_cache[0] = 5  # noqa: SLF001
     api._unit_changed_handler(sensor_unit)  # noqa: SLF001
@@ -305,7 +294,7 @@ async def test_rain_entity_and_sensor_platform_combine(
     await _setup_with_rain_entity(hass, mock_config_entry, RAIN_ENTITY)
 
     api = mock_config_entry.runtime_data
-    sensor_unit = _get_unit(mock_casambi, SENSOR_PLATFORM_UUID)
+    sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
     protection_id = _entity_id(
         hass, "switch", f"{mock_casambi.networkId}-weather-protection"
     )
@@ -507,7 +496,7 @@ async def test_frost_lock_reads_the_system_unit(
     await hass.async_block_till_done()
 
     api = mock_config_entry.runtime_data
-    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
     # 33.8 F is 1 C, below the 2 C default.
     assert api.frost_lock_temperature(louvre) == pytest.approx(1.0)
 
