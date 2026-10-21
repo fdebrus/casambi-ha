@@ -325,6 +325,18 @@ def mock_casambi() -> Generator[MagicMock]:
         yield casa
 
 
+@pytest.fixture(autouse=True)
+def no_host_bluetooth(
+    mock_bluetooth_adapters: None, mock_bleak_scanner_start: MagicMock
+) -> None:
+    """Keep the bluetooth component off the host adapter in every test.
+
+    Without the harness fixtures habluetooth opens the BlueZ management
+    socket on hosts whose kernel has one, which the test socket guard
+    refuses and the whole integration fails to set up.
+    """
+
+
 @pytest.fixture
 def mock_bluetooth() -> Generator[MagicMock]:
     """Mock the bluetooth helpers used by the integration."""
