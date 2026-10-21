@@ -144,19 +144,34 @@ async def test_reconnect_retries_protocol_error_once(
     mock_bluetooth: MagicMock,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Test that a repeated protocol error ends the reconnect attempts."""
+    """Test that repeated protocol errors slow the retries down, not stop them.
+
+    Giving up would only move the retries to the advertisement callback,
+    which starts a fresh task without any backoff.
+    """
     await _setup(hass, mock_config_entry)
     disconnect = _disconnect_callback(mock_casambi)
 
     mock_casambi.connected = False
-    mock_casambi.reconnect.side_effect = ProtocolError
+    mock_casambi.reconnect.side_effect = _outcomes(
+        mock_casambi, ProtocolError, ProtocolError, ProtocolError, None
+    )
 
-    with patch("custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock):
+    with patch(
+        "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
+    ) as sleep:
         disconnect()
         await hass.async_block_till_done()
 
-    # Tried once, retried once, then gave up instead of looping forever.
-    assert mock_casambi.reconnect.await_count == 2
+    assert mock_casambi.reconnect.await_count == 4
+    # The first protocol error is retried quickly, the next ones at the
+    # slowest pace.
+    assert _backoffs(sleep) == [
+        RECONNECT_BACKOFF_START,
+        RECONNECT_BACKOFF_MAX,
+        RECONNECT_BACKOFF_MAX,
+    ]
+    assert mock_config_entry.runtime_data.available
 
 
 async def test_reconnect_auth_failure_starts_reauth(

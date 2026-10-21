@@ -3,6 +3,7 @@
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
+from CasambiBt.errors import BluetoothError
 import pytest
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -73,6 +74,44 @@ async def test_get_sun_position(
     assert elevation == pytest.approx(62.6, abs=0.5)
     assert azimuth == pytest.approx(180.0, abs=1.0)
     assert "deprecated" not in caplog.text
+
+
+async def test_sun_tracking_logs_a_failed_move(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that a move failing on a flaky link is logged, not raised.
+
+    The periodic update runs as a task of its own, where an exception is
+    only a traceback in the log; the next update tries again anyway.
+    """
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    switch_id = er.async_get(hass).async_get_entity_id(
+        "switch",
+        DOMAIN,
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-sun-tracking",
+    )
+    assert switch_id is not None
+    mock_casambi.setSlider.side_effect = BluetoothError
+
+    with patch(
+        "custom_components.casambi_bt.switch.get_sun_position",
+        return_value=(45.0, 180.0),
+    ):
+        await hass.services.async_call(
+            "switch", "turn_on", {ATTR_ENTITY_ID: switch_id}, blocking=True
+        )
+
+    mock_casambi.setSlider.assert_awaited_once()
+    assert "could not move" in caplog.text
+    assert not [r for r in caplog.records if r.levelname == "ERROR"]
+    assert hass.states.get(switch_id).state == "on"
 
 
 async def test_sun_tracking_switch(

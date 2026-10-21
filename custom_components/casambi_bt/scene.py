@@ -7,7 +7,6 @@ from typing import Any
 
 from CasambiBt import Scene
 
-from homeassistant.components.light import ATTR_BRIGHTNESS
 from homeassistant.components.scene import Scene as SceneEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityDescription
@@ -49,7 +48,5 @@ class CasambiScene(SceneEntity, CasambiNetworkEntity):
     async def async_activate(self, **kwargs: Any) -> None:
         """Activate a scene."""
         _LOGGER.debug("Switching to scene %s", self.name)
-        brightness = kwargs.get(ATTR_BRIGHTNESS, 0xFF)
-        await self._async_casa_command(
-            self._api.casa.switchToScene(self._obj, brightness)
-        )
+        # scene.turn_on carries no brightness; the scene plays at full level.
+        await self._async_casa_command(self._api.casa.switchToScene(self._obj, 0xFF))

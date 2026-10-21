@@ -13,8 +13,16 @@ from custom_components.casambi_bt.const import (
     CONF_WIND_ENTITY,
     DOMAIN,
 )
-from custom_components.casambi_bt.switch import entity_reports_rain, entity_wind_kmh
-from homeassistant.const import ATTR_ENTITY_ID, ATTR_UNIT_OF_MEASUREMENT
+from custom_components.casambi_bt.readings import (
+    entity_reports_rain,
+    entity_temperature_c,
+    entity_wind_kmh,
+)
+from homeassistant.const import (
+    ATTR_ENTITY_ID,
+    ATTR_UNIT_OF_MEASUREMENT,
+    UnitOfTemperature,
+)
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
@@ -60,8 +68,13 @@ async def test_temperature_control_biases_tracking(
     temp_control_id = _entity_id(hass, "switch", f"{prefix}-temperature-control")
     setpoint_id = _entity_id(hass, "number", f"{prefix}-temp-setpoint")
 
-    # Terrace is 26 C with a 22 C setpoint: bias (22-26)*10 = -40 degrees.
-    hass.states.async_set(TEMP_SENSOR, "26")
+    # Terrace is 26 C (shown in the system's unit, here 78.8 F) with a 22 C
+    # setpoint: bias (22-26)*10 = -40 degrees.
+    hass.states.async_set(
+        TEMP_SENSOR,
+        "78.8",
+        {ATTR_UNIT_OF_MEASUREMENT: UnitOfTemperature.FAHRENHEIT},
+    )
     await hass.services.async_call(
         "number",
         "set_value",
@@ -452,6 +465,51 @@ def test_entity_wind_kmh(value: str, unit: str | None, expected: float | None) -
         assert result is None
     else:
         assert result == pytest.approx(expected)
+
+
+@pytest.mark.parametrize(
+    ("value", "unit", "expected"),
+    [
+        ("21.5", "°C", 21.5),
+        ("70.7", "°F", 21.5),
+        ("21.5", None, 21.5),
+        ("unknown", "°C", None),
+        ("21.5", "furlongs", None),
+    ],
+)
+def test_entity_temperature_c(
+    value: str, unit: str | None, expected: float | None
+) -> None:
+    """Test that temperature readings are converted to °C."""
+    attributes = {ATTR_UNIT_OF_MEASUREMENT: unit} if unit else {}
+    result = entity_temperature_c(State(TEMP_SENSOR, value, attributes))
+    if expected is None:
+        assert result is None
+    else:
+        assert result == pytest.approx(expected)
+
+
+async def test_frost_lock_reads_the_system_unit(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a temperature shown in °F is compared with the °C threshold."""
+    hass.states.async_set(
+        TEMP_SENSOR, "33.8", {ATTR_UNIT_OF_MEASUREMENT: UnitOfTemperature.FAHRENHEIT}
+    )
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_TEMPERATURE_ENTITY: TEMP_SENSOR}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    api = mock_config_entry.runtime_data
+    louvre = next(u for u in mock_casambi.units if u.uuid == WINSOL_LOUVRE_UUID)
+    # 33.8 F is 1 C, below the 2 C default.
+    assert api.frost_lock_temperature(louvre) == pytest.approx(1.0)
 
 
 async def test_frost_lock(

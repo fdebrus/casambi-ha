@@ -31,6 +31,17 @@ _VIA_DEVICE_ID_SUPPORTED: Final = "via_device_id" in getattr(
 )
 
 
+def network_device_info(api: CasambiApi) -> DeviceInfo:
+    """Return the device info of the network itself."""
+    return DeviceInfo(
+        name=api.casa.networkName,
+        manufacturer="Casambi",
+        model="Network",
+        identifiers={(DOMAIN, api.casa.networkId)},
+        connections={(device_registry.CONNECTION_BLUETOOTH, api.address)},
+    )
+
+
 def unit_device_info(api: CasambiApi, unit: CasambiUnit) -> DeviceInfo:
     """Return the device info of a unit, linked to the network device."""
     info: dict[str, Any] = {
@@ -132,13 +143,7 @@ class CasambiNetworkEntity(CasambiEntity, metaclass=ABCMeta):
     @property
     def device_info(self) -> DeviceInfo:
         """Return device information about this Casambi entity."""
-        return DeviceInfo(
-            name=self._api.casa.networkName,
-            manufacturer="Casambi",
-            model="Network",
-            identifiers={(DOMAIN, self._api.casa.networkId)},
-            connections={(device_registry.CONNECTION_BLUETOOTH, self._api.address)},
-        )
+        return network_device_info(self._api)
 
 
 class CasambiNetworkGroup(CasambiNetworkEntity, metaclass=ABCMeta):

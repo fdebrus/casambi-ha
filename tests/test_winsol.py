@@ -948,3 +948,124 @@ async def test_screen_forgets_motion_when_the_link_drops(
         state = hass.states.get(entity_id)
         assert state.state == "open"
         assert state.attributes[ATTR_CURRENT_POSITION] == 100
+
+
+async def test_screen_button_stop_keeps_the_run_direction(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the position reported after a button stop is not a run.
+
+    It differs from the frozen estimate by the estimate's error; read as a
+    run, its direction would decide which way the bit sends the motor next.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        await report("818b080000")
+        clock[0] = 1100.0
+        # Button: the screen extends; button again after 5.8 s: it stops,
+        # estimated at raw 42.
+        await report("828b080010")
+        clock[0] = 1105.8
+        await report("818b080000")
+        # It reports it stopped at 40, two short of the estimate.
+        await report("818b088002")
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 84
+
+        # The last run extended, so the bit would retract: close sends a
+        # position instead of the bit.
+        await hass.services.async_call(
+            COVER_DOMAIN,
+            SERVICE_CLOSE_COVER,
+            {ATTR_ENTITY_ID: entity_id},
+            blocking=True,
+        )
+        mock_casambi.setControlValue.assert_not_awaited()
+        mock_casambi.setLevel.assert_awaited_once()
+        assert mock_casambi.setLevel.await_args.args[1] == 255
+
+
+async def test_screen_button_run_across_a_link_drop(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a button run under way when the link returns.
+
+    Nothing is known about where the screen is or which way it runs, so
+    neither an end nor a direction is assumed: the position reported when
+    the run ends is taken as is.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        api = mock_config_entry.runtime_data
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = next(u for u in mock_casambi.units if u.uuid == WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        await report("818b080000")
+        clock[0] = 1100.0
+        await report("828b080010")
+        assert hass.states.get(entity_id).state == "closing"
+        clock[0] += 5
+        mock_casambi.connected = False
+        api._notify_connection_state()  # noqa: SLF001
+        await hass.async_block_till_done()
+
+        # Back ten minutes later, in the middle of another button run.
+        clock[0] += 600
+        mock_casambi.connected = True
+        api._notify_connection_state()  # noqa: SLF001
+        await report("828b080010")
+        assert hass.states.get(entity_id).state == "open"
+
+        # The run ends and the screen reports where it stopped: that is the
+        # position, not a run from the stale end.
+        await report("818b080000")
+        await report("818b088007")
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 53
+
+        # Nothing was learnt about the direction, so close sends a position.
+        await hass.services.async_call(
+            COVER_DOMAIN,
+            SERVICE_CLOSE_COVER,
+            {ATTR_ENTITY_ID: entity_id},
+            blocking=True,
+        )
+        mock_casambi.setControlValue.assert_not_awaited()
+        mock_casambi.setLevel.assert_awaited_once()

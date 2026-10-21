@@ -8,13 +8,12 @@ from CasambiBt._switch import SwitchEvent
 
 from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import device_registry, entity_registry as er
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
-from .const import DOMAIN
-from .entities import unit_device_info
+from .entities import network_device_info, unit_device_info
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,7 +35,6 @@ async def async_setup_entry(
     recreated from the entity registry on later starts.
     """
     casa_api = config_entry.runtime_data
-    known: set[tuple[int, int]] = set()
     entities: dict[tuple[int, int], CasambiButtonEventEntity] = {}
 
     def _add_button(
@@ -47,7 +45,6 @@ async def async_setup_entry(
             # Must be set before adding: the add may run eagerly and process
             # async_added_to_hass immediately.
             entity.set_pending(pending)
-        known.add((unit_id, button))
         entities[(unit_id, button)] = entity
         async_add_entities([entity])
         return entity
@@ -64,13 +61,13 @@ async def async_setup_entry(
             )
         except ValueError:
             continue
-        if (unit_id, button) not in known:
+        if (unit_id, button) not in entities:
             _add_button(unit_id, button)
 
     @callback
     def _handle_switch_event(event: SwitchEvent) -> None:
         key = (event.unit_id, event.button)
-        if key not in known:
+        if key not in entities:
             _LOGGER.debug(
                 "Discovered new switch button: unit %i button %i",
                 event.unit_id,
@@ -111,13 +108,7 @@ class CasambiButtonEventEntity(EventEntity):
         for unit in self._api.get_units():
             if unit.deviceId == self._unit_id:
                 return unit_device_info(self._api, unit)
-        return DeviceInfo(
-            name=self._api.casa.networkName,
-            manufacturer="Casambi",
-            model="Network",
-            identifiers={(DOMAIN, self._api.casa.networkId)},
-            connections={(device_registry.CONNECTION_BLUETOOTH, self._api.address)},
-        )
+        return network_device_info(self._api)
 
     @property
     def available(self) -> bool:

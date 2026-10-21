@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Iterable
-import contextlib
 import inspect
 import logging
 from pathlib import Path
+import re
 from time import monotonic
 from typing import Any, Final, cast
 
@@ -49,8 +49,22 @@ from .const import (
     RECONNECT_WARN_AFTER,
     entry_option,
 )
+from .readings import entity_temperature_c
 
 _LOGGER: Final = logging.getLogger(__name__)
+
+# The library reports every non-OK answer of the Casambi cloud at login as
+# an AuthenticationError("Login failed: <status>..."); only a rejection
+# means the password is wrong, an outage is retried like any other.
+_LOGIN_STATUS: Final = re.compile(r"Login failed: (\d{3})")
+_TRANSIENT_LOGIN_STATUSES: Final = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
+def _login_outage(err: AuthenticationError) -> bool:
+    """Return True if the login failed because of the cloud, not the password."""
+    match = _LOGIN_STATUS.search(str(err))
+    return match is not None and int(match.group(1)) in _TRANSIENT_LOGIN_STATUSES
+
 
 # Wired push-button interfaces only report on the input stream, which the
 # library's decoder drops for presses and releases.
@@ -252,6 +266,10 @@ class CasambiApi:
         except BluetoothError as err:
             raise ConfigEntryNotReady("Failed to use bluetooth") from err
         except AuthenticationError as err:
+            if _login_outage(err):
+                raise ConfigEntryNotReady(
+                    f"The Casambi cloud did not answer the login: {err}"
+                ) from err
             raise ConfigEntryAuthFailed(
                 f"Failed to authenticate to network {self.address}"
             ) from err
@@ -310,17 +328,17 @@ class CasambiApi:
                 # enough to recover if that notification never arrives.
                 backoff = max(backoff, RECONNECT_BACKOFF_NO_DEVICE)
                 reason = "no Bluetooth adapter or proxy in range sees it"
-            except ProtocolError:
-                # Retry once to see whether the error is permanent.
+            except ProtocolError as err:
+                # A garbled handshake, or the network key changed (the
+                # library only logs in on the first connect, so that never
+                # surfaces as an authentication error here). Retrying at the
+                # slowest pace beats giving up: with the task gone, every
+                # advertisement would start a fresh one without any backoff.
                 if protocol_error:
-                    _LOGGER.exception(
-                        "Giving up on reconnecting to the Casambi network %s "
-                        "after repeated protocol errors",
-                        self.address,
-                    )
-                    return
-                _LOGGER.debug("Retrying once on protocol error", exc_info=True)
+                    backoff = max(backoff, RECONNECT_BACKOFF_MAX)
                 protocol_error = True
+                reason = f"protocol error: {err}"
+                _LOGGER.debug("Reconnect failed with a protocol error", exc_info=True)
             except AuthenticationError:
                 # The password changed; retrying cannot help, ask the user.
                 _LOGGER.error(
@@ -386,10 +404,9 @@ class CasambiApi:
         entity_id = entry_option(self.conf_entry, CONF_TEMPERATURE_ENTITY, None)
         if not entity_id:
             return None
-        state = self.hass.states.get(entity_id)
-        if state is not None:
-            with contextlib.suppress(ValueError):
-                self.last_temperature = float(state.state)
+        temperature = entity_temperature_c(self.hass.states.get(entity_id))
+        if temperature is not None:
+            self.last_temperature = temperature
         if self.last_temperature is None:
             return None
         threshold = entry_option(
@@ -556,10 +573,11 @@ class CasambiApi:
     @callback
     def _bluetooth_callback(
         self,
-        service_info: bluetooth.BluetoothServiceInfoBleak,
+        _service_info: bluetooth.BluetoothServiceInfoBleak,
         _change: bluetooth.BluetoothChange,
     ) -> None:
-        if not self.available and service_info.connectable:
+        # Only connectable advertisements match the registered callback.
+        if not self.available:
             self._schedule_reconnect()
 
 

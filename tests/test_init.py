@@ -85,6 +85,34 @@ async def test_setup_auth_failure_starts_reauth(
     assert len(flows) == 1
 
 
+async def test_setup_retries_when_the_cloud_is_down(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a cloud outage at login is retried, not taken for a bad password.
+
+    The library reports every non-OK answer of the Casambi cloud as an
+    authentication error; a reauth prompt would make the user re-enter the
+    password, which wipes the network cache and with it offline operation.
+    """
+    mock_casambi.connect.side_effect = AuthenticationError(
+        "Login failed: 503\nService Unavailable"
+    )
+
+    mock_config_entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
+    assert not [
+        flow
+        for flow in hass.config_entries.flow.async_progress()
+        if flow["context"].get("source") == "reauth"
+    ]
+
+
 async def test_diagnostics(
     hass: HomeAssistant,
     mock_casambi: MagicMock,

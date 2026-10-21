@@ -185,6 +185,10 @@ async def test_reconfigure_flow(
 ) -> None:
     """Test the reconfiguration flow."""
     mock_config_entry.add_to_hass(hass)
+    # The options flow was used before: its values are the ones in force.
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_IMPORT_GROUPS: False}
+    )
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -197,6 +201,12 @@ async def test_reconfigure_flow(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
+    # The form shows the value in force, not the one entered at setup.
+    suggested = {
+        key.schema: key.description["suggested_value"]
+        for key in result["data_schema"].schema
+    }
+    assert suggested[CONF_IMPORT_GROUPS] is False
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -207,6 +217,8 @@ async def test_reconfigure_flow(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reconfigure_successful"
     assert mock_config_entry.data[CONF_PASSWORD] == "changed"
+    # The flags entered here take effect even though options exist.
+    assert mock_config_entry.options[CONF_IMPORT_GROUPS] is True
 
 
 async def test_reconfigure_flow_wrong_network(
