@@ -555,6 +555,12 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         )
         self._platform_wind: float | None = None
         self._entity_wind: float | None = None
+        # Units whose protective command failed, to send again on the next
+        # reading or once the network is reachable: uuid -> (unit, retract,
+        # the reading it failed on). A command is only retried on a later
+        # reading, so a failure that surfaces at once is not sent twice.
+        self._pending: dict[str, tuple[Unit, bool, int]] = {}
+        self._reading = 0
 
     async def async_added_to_hass(self) -> None:
         """Restore state and start listening to the weather sources."""
@@ -606,7 +612,55 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         self._platform_wind = None
         self._entity_wind = None
         self._wind_latched = False
+        self._pending.clear()
         self.async_write_ha_state()
+
+    @callback
+    def _connection_callback(self) -> None:
+        """Send the commands that failed while the network was unreachable."""
+        super()._connection_callback()
+        self._reading += 1
+        self._retry_pending()
+
+    def _secure(self, unit: Unit, retract: bool) -> None:
+        """Retract a screen or close a louvre in the background."""
+        self._pending.pop(unit.uuid, None)
+        self.hass.async_create_task(self._async_secure(unit, retract))
+
+    async def _async_secure(self, unit: Unit, retract: bool) -> None:
+        """Send one protective command; keep it pending if it fails.
+
+        Retracted is raw 0 on the Winsol SO! (the dimmer counts how far the
+        screen is extended) and closed is slider 0 on the louvres.
+        """
+        try:
+            if retract:
+                await self._async_casa_command(self._api.casa.setLevel(unit, 0))
+            else:
+                await self._async_casa_command(self._api.casa.setSlider(unit, 0))
+        except HomeAssistantError:
+            _LOGGER.warning(
+                "Weather protection: could not %s %s, will try again",
+                "retract" if retract else "close",
+                unit.name,
+            )
+            self._pending[unit.uuid] = (unit, retract, self._reading)
+
+    @callback
+    def _retry_pending(self) -> None:
+        """Send the pending commands that are still called for."""
+        if not self._pending or not self._api.available:
+            return
+        for unit, retract, reading in list(self._pending.values()):
+            wanted = (
+                self._api.wind_active
+                if retract
+                else self._api.rain_active or self._api.wind_active
+            )
+            if not wanted:
+                del self._pending[unit.uuid]
+            elif reading < self._reading:
+                self._secure(unit, retract)
 
     @callback
     def _wind_entity_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -617,10 +671,14 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         """Evaluate the wind entity; keep the last reading when it can't tell."""
         if not self._attr_is_on:
             return
+        self._reading += 1
         wind_kmh = entity_wind_kmh(state)
         if wind_kmh is not None:
             self._entity_wind = wind_kmh
             self._update_wind()
+        # After the reading, so that one showing the weather has passed
+        # cancels a pending command instead of sending it.
+        self._retry_pending()
 
     @callback
     def _update_wind(self) -> None:
@@ -647,9 +705,9 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
                 wind_kmh,
             )
             for screen in self._screens:
-                self.hass.async_create_task(self._async_retract_screen(screen))
+                self._secure(screen, retract=True)
             for louvre in self._louvres:
-                self.hass.async_create_task(self._async_close_louvre(louvre))
+                self._secure(louvre, retract=False)
         elif wind_kmh < threshold * WIND_HYSTERESIS and self._wind_latched:
             self._wind_latched = False
             self._api.wind_active = False
@@ -664,10 +722,12 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         """Evaluate the rain entity; keep the last reading when it can't tell."""
         if not self._attr_is_on:
             return
+        self._reading += 1
         raining = entity_reports_rain(state)
         if raining is not None:
             self._entity_rain = raining
             self._update_rain()
+        self._retry_pending()
 
     @callback
     def _update_rain(self) -> None:
@@ -677,7 +737,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
             self._api.rain_active = True
             _LOGGER.info("Weather protection: rain detected, closing louvres")
             for louvre in self._louvres:
-                self.hass.async_create_task(self._async_close_louvre(louvre))
+                self._secure(louvre, retract=False)
         elif not raining and self._api.rain_active:
             self._api.rain_active = False
             _LOGGER.info("Weather protection: rain stopped")
@@ -687,6 +747,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         """Evaluate new sensor platform readings."""
         if not self._attr_is_on:
             return
+        self._reading += 1
 
         cache = unit.sensor_cache
 
@@ -699,11 +760,4 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         if wind_raw is not None:
             self._platform_wind = wind_raw / 4
             self._update_wind()
-
-    async def _async_close_louvre(self, unit: Unit) -> None:
-        await self._async_casa_command(self._api.casa.setSlider(unit, 0))
-
-    async def _async_retract_screen(self, unit: Unit) -> None:
-        # Retracted is raw 0 on the Winsol SO!: the dimmer counts how far
-        # the screen is extended, not how open it is.
-        await self._async_casa_command(self._api.casa.setLevel(unit, 0))
+        self._retry_pending()

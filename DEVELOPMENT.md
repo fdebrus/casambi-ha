@@ -31,8 +31,11 @@ operation, not an error.
   changed) starts a reauth flow instead of looping.
 * **Writes trigger reconnects.** Entities reach the library through
   `CasambiProxy`, which wraps every coroutine call: a `BluetoothError`
-  during a write means the link is gone before the library noticed, so a
-  reconnect is scheduled. Unlike upstream the error is re-raised, so the
+  during a write with the library no longer reporting itself connected
+  means it gave the link up without running its disconnect callbacks, so
+  a reconnect is scheduled. A write that fails while the library still
+  says connected (a timeout) is only reported: the library's reconnect
+  would return at once, and a real drop follows through the callbacks. Unlike upstream the error is re-raised, so the
   failed command is still reported to the caller as a `HomeAssistantError`
   rather than silently doing nothing.
 * **Entities follow the connection.** `CasambiApi` fans out connection
@@ -44,8 +47,9 @@ operation, not an error.
   adapter or proxy in range sees it*, or the Bluetooth error); a second
   warning reports when the network is reachable again. Shorter failures
   stay at debug level.
-* **Unloading wins.** `disconnect()` cancels a running reconnect task and
-  waits up to 5 s for it; once cancelled, no new reconnect is scheduled.
+* **Unloading wins.** `disconnect()` sets `_closing`, cancels a running
+  reconnect task and waits up to 5 s for it; nothing schedules a reconnect
+  afterwards, not even a write failing during the teardown.
 
 ### Pitfalls found on the pergola
 
@@ -74,6 +78,10 @@ of operations.
    did not change. `reconnect()` now yields once (`asyncio.sleep(0)`)
    before its first attempt, and a reconnect that returns while
    `casa.connected` is still false counts as a failed attempt.
+
+The screen cover also forgets its motion estimate when the link drops
+(`_connection_callback`): the first state pushed after a reconnect is
+taken as rest, since the screen may have been driven meanwhile.
 
 The units are marked offline by the library itself on a disconnect, and
 come back only when the network pushes their state again after a real
@@ -400,6 +408,10 @@ automatically. Wind is the higher of the sensor platform (packet 1 / 4)
 and the wind entity (`entity_wind_kmh`, converted from its unit with
 `SpeedConverter`; no unit means km/h). It acts on the transitions, once
 when rain or wind starts: reopening the roof during the rain is not undone.
+A protective command that fails (`HomeAssistantError` from the proxy) is
+kept in `_pending` with the reading it failed on, and sent again on a
+later reading or when the connection comes back, as long as the rain or
+wind it answers to is still active.
 
 **Frost lock**: a per-louvre config switch (on by default, restored).
 `CasambiApi.frost_lock_temperature(unit)` returns the reading while the

@@ -210,6 +210,8 @@ class CasambiApi:
         # library still reports itself connected while it runs the
         # disconnect callbacks, so its own flag can't be read there.
         self._link_up = False
+        # Set once disconnect() starts: no reconnect may be scheduled after.
+        self._closing = False
         self._handlers_registered = False
         self._unit_snapshot: frozenset[str] | None = None
 
@@ -445,6 +447,7 @@ class CasambiApi:
 
     async def disconnect(self) -> None:
         """Disconnects from the controller and disables automatic reconnect."""
+        self._closing = True
         await self._cancel_reconnect()
         self._link_up = False
 
@@ -492,12 +495,8 @@ class CasambiApi:
     @callback
     def _schedule_reconnect(self) -> None:
         """Start the reconnect task unless one is already running."""
-        # A cancelled task means disconnect() ran, so the entry is going away
-        # and a reconnect must never be scheduled again.
-        if self._reconnect_task is not None and self._reconnect_task.cancelled():
-            _LOGGER.debug(
-                "Attempted to schedule a reconnect after the task was cancelled"
-            )
+        if self._closing:
+            _LOGGER.debug("Attempted to schedule a reconnect while disconnecting")
             return
 
         if self._reconnect_task is None or self._reconnect_task.done():
@@ -611,8 +610,13 @@ class CasambiProxy:
             try:
                 return await attr(*args, **kwargs)
             except BluetoothError:
-                _LOGGER.info("Triggering a reconnect after a write failed")
-                self._api._schedule_reconnect()  # noqa: SLF001
+                # A write can fail while the library still considers itself
+                # connected (a timeout, say); its reconnect would then return
+                # at once. Only act when it has given the connection up
+                # without running the disconnect callbacks.
+                if not self._casa.connected:
+                    _LOGGER.info("Triggering a reconnect after a write failed")
+                    self._api._schedule_reconnect()  # noqa: SLF001
                 raise
 
         return async_wrapper

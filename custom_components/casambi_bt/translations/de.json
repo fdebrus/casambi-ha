@@ -4,15 +4,16 @@
             "already_configured": "Netzwerk ist schon konfiguriert.",
             "bluetooth_error": "Bluetooth scheint nicht richtig zu funktionieren.",
             "cannot_connect": "Verbindung fehlgeschlagen",
-            "invalid_address": "Die Bluetooth MAC Adresse des Netzwerks ist ungültig.",
             "invalid_auth": "Anmeldung ungültig",
+            "not_supported": "Dieses Gerät ist kein verbindbares Casambi Netzwerk.",
             "reauth_successful": "Neuanmeldung war erfolgreich",
             "reconfigure_successful": "Neukonfiguration war erfolgreich",
-            "wrong_network": "Die Adresse gehört nicht zum konfigurierten Casambi Netzwerk.",
-            "unknown": "Unerwarteter Fehler"
+            "unknown": "Unerwarteter Fehler",
+            "wrong_network": "Die Adresse gehört nicht zum konfigurierten Casambi Netzwerk."
         },
         "error": {
             "cannot_connect": "Verbindung fehlgeschlagen",
+            "invalid_address": "Die Bluetooth MAC Adresse des Netzwerks ist ungültig.",
             "invalid_auth": "Anmeldung ungültig",
             "unknown": "Unerwarteter Fehler"
         },

@@ -89,7 +89,7 @@ Each louvre has a set of switches and dials; together they work in this order �
 **🌧️💨 Weather protection** — a network switch, present when a Sensor Platform or a rain/wind sensor is configured.
 - **Rain** closes the louvres and pauses tracking until it is dry.
 - **Wind** at the threshold retracts the screens, closes the louvres (the position the roof is rated for: Winsol SO! wind class 3, 6 Beaufort) and pauses tracking until it drops below 80 % of the threshold. Screens are never lowered again automatically.
-- It acts once when rain or wind starts. Unavailable sensors keep their last reading.
+- It acts once when rain or wind starts. A command that fails (the link was down during a gust) is sent again on the next reading and as soon as the pergola is reachable. Unavailable sensors keep their last reading.
 
 **🧊 Frost lock** — on by default. Below the frost lock temperature, Home Assistant refuses to open the louvres (from the dashboard, Siri/HomeKit or an automation) with an error saying why, and tracking pauses. Closing and stopping still work. The wall button and the Casambi app are not affected. Watch the **Overcurrent events** sensor: it counts the motor forcing on stuck slats.
 

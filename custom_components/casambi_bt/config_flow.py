@@ -205,15 +205,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_create_entry(title=title, data=data)
 
-    async def async_step_bluetooth_error(
-        self, _user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle bluetooth errors.
-
-        The config flow can't proceed if there is a bluetooth error so this is the last step.
-        """
-        return self.async_abort(reason="bluetooth_error")
-
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
@@ -221,7 +212,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self.discovery_info = discovery_info
 
         if not discovery_info.connectable:
-            return self.async_abort(reason="Unsuitable discovery.")
+            return self.async_abort(reason="not_supported")
 
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
@@ -252,7 +243,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             suggested_input[CONF_ADDRESS] = self.discovery_info.address
 
         if async_scanner_count(self.hass, connectable=True) < 1:
-            return self.async_show_form(step_id="bluetooth_error")
+            return self.async_abort(reason="bluetooth_error")
 
         if user_input:
             errors = {}

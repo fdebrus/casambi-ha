@@ -112,8 +112,8 @@ async def test_user_flow_no_scanner(
     ):
         result = await _start_network_flow(hass)
 
-    assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "bluetooth_error"
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "bluetooth_error"
 
 
 async def test_options_flow(

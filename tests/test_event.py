@@ -161,3 +161,32 @@ async def test_button_entity_restored_from_registry(
     )
     assert entity_id is not None
     assert hass.states.get(entity_id) is not None
+
+
+async def test_button_entity_follows_the_connection(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a button entity goes unavailable when the link drops."""
+    await _setup(hass, mock_config_entry)
+    api = mock_config_entry.runtime_data
+    handler = _get_switch_handler(mock_casambi)
+    handler(_make_switch_event(1, 42, ButtonEventType.PRESS))
+    await hass.async_block_till_done()
+    entity_id = er.async_get(hass).async_get_entity_id(
+        "event", DOMAIN, f"{NETWORK_ID}-switch-42-1"
+    )
+    assert entity_id is not None
+    assert hass.states.get(entity_id).state != "unavailable"
+
+    mock_casambi.connected = False
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "unavailable"
+
+    mock_casambi.connected = True
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state != "unavailable"
