@@ -428,7 +428,7 @@ weather protection are not affected.
 
 To fully decode what a unit (e.g. a Winsol pergola) speaks over BLE, capture two artifacts and correlate them:
 
-1. **The schema — diagnostics download.** With the integration connected, go to Settings → Devices & services → Casambi Bluetooth → three-dot menu → *Download diagnostics*. The `units` section lists every unit's full control table: control type (including raw ids for types the library calls `UNKOWN`), bit offset, bit length, min/max, and the current parsed state. This shows *what channels exist*.
+1. **The schema — diagnostics download.** With the integration connected, go to Settings → Devices & services → Casambi Bluetooth → three-dot menu → *Download diagnostics*. The `units` section lists every unit's full control table: control type (including raw ids for types the library calls `UNKOWN`), bit offset, bit length, min/max, and the current parsed state. This shows *what channels exist*. The `automation` section shows what the pergola automation currently holds (rain and wind latches, last temperature, the per-louvre switch and dial values), which is what to look at when the louvres don't move as expected.
 
 2. **The traffic — debug log.** Enable debug logging in `configuration.yaml`:
 

@@ -85,6 +85,24 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str
     return {"title": network_name, "id": data[CONF_ADDRESS]}
 
 
+async def _async_try_connect(
+    hass: HomeAssistant, data: dict[str, Any]
+) -> tuple[dict[str, str] | None, dict[str, str]]:
+    """Connect with the entered data; return the network info or a form error."""
+    if len(data[CONF_ADDRESS]) != 17:
+        return None, {"base": "invalid_address"}
+    try:
+        info = await _validate_input(hass, data)
+    except NetworkNotFoundError:
+        return None, {"base": "cannot_connect"}
+    except AuthenticationError:
+        return None, {"base": "invalid_auth"}
+    except Exception:  # pylint: disable=broad-except
+        _LOGGER.exception("Unexpected exception")
+        return None, {"base": "unknown"}
+    return info, {}
+
+
 class OptionsFlow(config_entries.OptionsFlow):
     """Handle an options flow for Casambi Bluetooth."""
 
@@ -246,26 +264,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="bluetooth_error")
 
         if user_input:
-            errors = {}
-
             user_input[CONF_ADDRESS] = format_mac(user_input[CONF_ADDRESS]).upper()
-
-            if len(user_input[CONF_ADDRESS]) == 17:
-                try:
-                    info = await _validate_input(self.hass, user_input)
-                except NetworkNotFoundError:
-                    errors["base"] = "cannot_connect"
-                except AuthenticationError:
-                    errors["base"] = "invalid_auth"
-                except Exception:  # pylint: disable=broad-except
-                    _LOGGER.exception("Unexpected exception")
-                    errors["base"] = "unknown"
-                else:
-                    return await self._async_create_casa_entry(
-                        info["title"], info["id"], user_input
-                    )
-            else:
-                errors["base"] = "invalid_address"
+            info, errors = await _async_try_connect(self.hass, user_input)
+            if info is not None:
+                return await self._async_create_casa_entry(
+                    info["title"], info["id"], user_input
+                )
 
             return self.async_show_form(
                 step_id="network",
@@ -290,32 +294,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         assert entry is not None
 
         if user_input:
-            errors = {}
-
             user_input[CONF_ADDRESS] = format_mac(user_input[CONF_ADDRESS]).upper()
-
-            if len(user_input[CONF_ADDRESS]) == 17:
-                try:
-                    info = await _validate_input(self.hass, user_input)
-                except NetworkNotFoundError:
-                    errors["base"] = "cannot_connect"
-                except AuthenticationError:
-                    errors["base"] = "invalid_auth"
-                except Exception:  # pylint: disable=broad-except
-                    _LOGGER.exception("Unexpected exception")
-                    errors["base"] = "unknown"
-                else:
-                    if info["id"] != entry.unique_id:
-                        return self.async_abort(reason="wrong_network")
-                    self.hass.config_entries.async_update_entry(
-                        entry,
-                        title=info["title"],
-                        data={**entry.data, **user_input},
-                    )
-                    await self.hass.config_entries.async_reload(entry.entry_id)
-                    return self.async_abort(reason="reconfigure_successful")
-            else:
-                errors["base"] = "invalid_address"
+            info, errors = await _async_try_connect(self.hass, user_input)
+            if info is not None:
+                if info["id"] != entry.unique_id:
+                    return self.async_abort(reason="wrong_network")
+                self.hass.config_entries.async_update_entry(
+                    entry,
+                    title=info["title"],
+                    data={**entry.data, **user_input},
+                )
+                await self.hass.config_entries.async_reload(entry.entry_id)
+                return self.async_abort(reason="reconfigure_successful")
 
             return self.async_show_form(
                 step_id="reconfigure",
@@ -351,17 +341,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 **self.entry.data,
                 **user_input,
             }
-
-            try:
-                await _validate_input(self.hass, data)
-            except NetworkNotFoundError:
-                errors["base"] = "cannot_connect"
-            except AuthenticationError:
-                errors["base"] = "invalid_auth"
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception("Unexpected exception")
-                errors["base"] = "unknown"
-            else:
+            info, errors = await _async_try_connect(self.hass, data)
+            if info is not None:
                 self.hass.config_entries.async_update_entry(
                     self.entry,
                     data=data,

@@ -23,6 +23,7 @@ from CasambiBt import Unit, UnitControl, UnitControlType
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.const import (
     ATTR_UNIT_OF_MEASUREMENT,
+    STATE_OFF,
     STATE_ON,
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
@@ -46,14 +47,17 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util.unit_conversion import SpeedConverter
 
 from . import CasambiApi, CasambiConfigEntry
+from .binary_sensor import PACKET_RAIN, RAIN_THRESHOLD
 from .classify import UnitKind, classify_unit
 from .const import (
+    CASA_RAW_MAX,
     CONF_LOUVRE_AZIMUTH,
     CONF_RAIN_ENTITY,
     CONF_TEMPERATURE_ENTITY,
     CONF_WIND_ENTITY,
     CONF_WIND_THRESHOLD,
     DEFAULT_LOUVRE_AZIMUTH,
+    DEFAULT_TEMP_SETPOINT,
     DEFAULT_WIND_THRESHOLD,
     entry_option,
 )
@@ -78,18 +82,11 @@ UPDATE_INTERVAL: Final = timedelta(minutes=5)
 # 5 raw is roughly 3 degrees).
 DEADBAND_RAW: Final = 5
 
-CASA_RAW_MAX: Final = 255
-
 # Degrees of additional tilt per degree Celsius of temperature error.
 TEMP_GAIN: Final = 10.0
 
 # The user offset and the temperature bias combined are limited to this.
 OFFSET_LIMIT: Final = 45.0
-
-PACKET_RAIN: Final = 0
-RAIN_THRESHOLD: Final = 2
-
-DEFAULT_TEMP_SETPOINT: Final = 22.0
 
 # Re-arm the wind latch when the wind drops below this fraction of the
 # threshold.
@@ -265,15 +262,50 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
         )
 
 
-class CasambiSunTrackingSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEntity):
+class CasambiLouvreAutomationSwitch(
+    CasambiUnitConfigEntity, SwitchEntity, RestoreEntity
+):
+    """A switch of the louvre automation whose state survives a restart.
+
+    The state is restored when the entity is added and made to take effect
+    by ``_apply``, which also runs on every change.
+    """
+
+    _attr_is_on = False
+    _obj: Unit
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the previous state and make it take effect."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
+            self._attr_is_on = last_state.state == STATE_ON
+        self._apply()
+
+    @callback
+    def _apply(self) -> None:
+        """Make the current state take effect."""
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        """Turn the automation on."""
+        self._attr_is_on = True
+        self._apply()
+        self.async_write_ha_state()
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        """Turn the automation off."""
+        self._attr_is_on = False
+        self._apply()
+        self.async_write_ha_state()
+
+
+class CasambiSunTrackingSwitch(CasambiLouvreAutomationSwitch):
     """Enables automatic sun tracking for a louvre unit.
 
     While on, the louvre angle follows the sun so that the slats block
     direct sunlight. The sun offset number shifts the result, and the
     temperature control switch adds a temperature-dependent bias.
     """
-
-    _attr_is_on = False
 
     def __init__(
         self, api: CasambiApi, unit: Unit, config_entry: CasambiConfigEntry
@@ -282,23 +314,22 @@ class CasambiSunTrackingSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEnt
         desc = TypedEntityDescription(
             key=unit.uuid, entity_type="sun-tracking", translation_key="sun_tracking"
         )
-        self._obj: Unit
         super().__init__(api, desc, unit)
         self._config_entry = config_entry
         self._cancel_interval: Any = None
-
-    async def async_added_to_hass(self) -> None:
-        """Restore the previous state and resume tracking if it was on."""
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state == "on":
-            self._attr_is_on = True
-            self._start()
 
     async def async_will_remove_from_hass(self) -> None:
         """Stop tracking when the entity is removed."""
         self._stop()
         await super().async_will_remove_from_hass()
+
+    @callback
+    def _apply(self) -> None:
+        """Run the periodic update while on."""
+        if self._attr_is_on:
+            self._start()
+        else:
+            self._stop()
 
     def _start(self) -> None:
         if self._cancel_interval is None:
@@ -313,16 +344,8 @@ class CasambiSunTrackingSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEnt
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Enable sun tracking and apply immediately."""
-        self._attr_is_on = True
-        self._start()
-        self.async_write_ha_state()
+        await super().async_turn_on(**kwargs)
         await self._async_apply()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable sun tracking."""
-        self._attr_is_on = False
-        self._stop()
-        self.async_write_ha_state()
 
     @callback
     def _interval_update(self, _now: Any) -> None:
@@ -387,17 +410,13 @@ class CasambiSunTrackingSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEnt
         await self._async_casa_command(self._api.casa.setSlider(unit, target_raw))
 
 
-class CasambiTemperatureControlSwitch(
-    CasambiUnitConfigEntity, SwitchEntity, RestoreEntity
-):
+class CasambiTemperatureControlSwitch(CasambiLouvreAutomationSwitch):
     """Biases the sun tracking of a louvre by temperature.
 
     While on (and sun tracking is on), the louvres tilt toward more shade
     when the temperature source reads above the setpoint and toward more
     sun when it reads below.
     """
-
-    _attr_is_on = False
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a temperature control switch."""
@@ -406,31 +425,15 @@ class CasambiTemperatureControlSwitch(
             entity_type="temperature-control",
             translation_key="temperature_control",
         )
-        self._obj: Unit
         super().__init__(api, desc, unit)
 
-    async def async_added_to_hass(self) -> None:
-        """Restore the previous state."""
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state == "on":
-            self._attr_is_on = True
-            self._api.temp_control[self._obj.uuid] = True
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable the temperature bias."""
-        self._attr_is_on = True
-        self._api.temp_control[self._obj.uuid] = True
-        self.async_write_ha_state()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable the temperature bias."""
-        self._attr_is_on = False
-        self._api.temp_control[self._obj.uuid] = False
-        self.async_write_ha_state()
+    @callback
+    def _apply(self) -> None:
+        """Tell the sun tracking whether to add the temperature bias."""
+        self._api.temp_control[self._obj.uuid] = bool(self._attr_is_on)
 
 
-class CasambiFrostLockSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEntity):
+class CasambiFrostLockSwitch(CasambiLouvreAutomationSwitch):
     """Keeps a louvre from being opened when it may be frozen.
 
     While on and the temperature source reads below the frost lock
@@ -445,28 +448,12 @@ class CasambiFrostLockSwitch(CasambiUnitConfigEntity, SwitchEntity, RestoreEntit
         desc = TypedEntityDescription(
             key=unit.uuid, entity_type="frost-lock", translation_key="frost_lock"
         )
-        self._obj: Unit
         super().__init__(api, desc, unit)
 
-    async def async_added_to_hass(self) -> None:
-        """Restore the previous state."""
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state == "off":
-            self._attr_is_on = False
-        self._api.frost_lock[self._obj.uuid] = self._attr_is_on
-
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Enable the frost lock."""
-        self._attr_is_on = True
-        self._api.frost_lock[self._obj.uuid] = True
-        self.async_write_ha_state()
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Disable the frost lock."""
-        self._attr_is_on = False
-        self._api.frost_lock[self._obj.uuid] = False
-        self.async_write_ha_state()
+    @callback
+    def _apply(self) -> None:
+        """Tell the cover and the sun tracking whether the lock is armed."""
+        self._api.frost_lock[self._obj.uuid] = bool(self._attr_is_on)
 
 
 class CasambiSensorEnableSwitch(CasambiBroadcastUnitEntity, SwitchEntity):
@@ -552,7 +539,6 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         self._sensor_platforms = sensor_platforms
         self._louvres = louvres
         self._screens = screens
-        self._wind_latched = False
         self._rain_entity: str | None = entry_option(
             config_entry, CONF_RAIN_ENTITY, None
         )
@@ -619,7 +605,6 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         self._entity_rain = False
         self._platform_wind = None
         self._entity_wind = None
-        self._wind_latched = False
         self._pending.clear()
         self.async_write_ha_state()
 
@@ -704,8 +689,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         threshold = entry_option(
             self._config_entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
         )
-        if wind_kmh >= threshold and not self._wind_latched:
-            self._wind_latched = True
+        if wind_kmh >= threshold and not self._api.wind_active:
             self._api.wind_active = True
             _LOGGER.info(
                 "Weather protection: wind %.1f km/h, retracting screens and "
@@ -716,8 +700,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
                 self._secure(screen, retract=True)
             for louvre in self._louvres:
                 self._secure(louvre, retract=False)
-        elif wind_kmh < threshold * WIND_HYSTERESIS and self._wind_latched:
-            self._wind_latched = False
+        elif wind_kmh < threshold * WIND_HYSTERESIS and self._api.wind_active:
             self._api.wind_active = False
             _LOGGER.info("Weather protection: wind dropped to %.1f km/h", wind_kmh)
 

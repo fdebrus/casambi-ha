@@ -8,8 +8,11 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.casambi_bt import async_remove_config_entry_device
 from custom_components.casambi_bt.const import DOMAIN
+from custom_components.casambi_bt.diagnostics import async_get_config_entry_diagnostics
 from homeassistant.components.bluetooth import BluetoothScanningMode
+from homeassistant.components.diagnostics import REDACTED
 from homeassistant.config_entries import ConfigEntryState
+from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
@@ -17,8 +20,8 @@ from .conftest import (
     LIGHT_UUID,
     NETWORK_ADDRESS,
     NETWORK_ID,
+    WINSOL_LOUVRE_UUID,
     get_device,
-    make_light_unit,
 )
 
 
@@ -82,29 +85,32 @@ async def test_setup_auth_failure_starts_reauth(
     assert len(flows) == 1
 
 
-async def test_reload_when_units_change(
+async def test_diagnostics(
     hass: HomeAssistant,
     mock_casambi: MagicMock,
     mock_bluetooth: MagicMock,
     mock_config_entry: MockConfigEntry,
 ) -> None:
-    """Test that a reconnect with a changed unit list reloads the entry."""
+    """Test that the diagnostics describe the network and the automation."""
     mock_config_entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
     await hass.async_block_till_done()
 
-    api = mock_config_entry.runtime_data
+    diagnostics = await async_get_config_entry_diagnostics(hass, mock_config_entry)
 
-    # Reconnect with the same units: no reload.
-    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
-        await api.connect()
-        mock_reload.assert_not_called()
-
-    # Reconnect with one unit removed: reload scheduled.
-    mock_casambi.units = [make_light_unit()]
-    with patch.object(hass.config_entries, "async_schedule_reload") as mock_reload:
-        await api.connect()
-        mock_reload.assert_called_once_with(mock_config_entry.entry_id)
+    assert diagnostics["entry"]["data"][CONF_PASSWORD] == REDACTED
+    assert diagnostics["network"]["id"] == NETWORK_ID
+    assert diagnostics["network"]["available"] is True
+    assert [unit["uuid"] for unit in diagnostics["units"]] == [
+        unit.uuid for unit in mock_casambi.units
+    ]
+    louvre = next(u for u in diagnostics["units"] if u["uuid"] == WINSOL_LOUVRE_UUID)
+    assert louvre["controls"][6]["type"] == "SLIDER"
+    assert louvre["state"]["raw_state"] == "0000000000"
+    # The automation switches have registered their restored state.
+    assert diagnostics["automation"]["frost_lock"] == {WINSOL_LOUVRE_UUID: True}
+    assert diagnostics["automation"]["temp_control"] == {WINSOL_LOUVRE_UUID: False}
+    assert diagnostics["automation"]["rain_active"] is False
 
 
 async def test_remove_config_entry_device(
