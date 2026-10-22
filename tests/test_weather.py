@@ -167,6 +167,65 @@ async def test_weather_protection_rain_and_wind(
     mock_casambi.setLevel.assert_awaited_once()
 
 
+async def test_rain_pauses_sun_tracking(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that sun tracking waits while it rains and resumes after."""
+    await _setup(hass, mock_config_entry)
+    api = mock_config_entry.runtime_data
+    sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
+    # A calm day, so that only the rain holds the louvres.
+    sensor_unit._sensor_cache[1] = 40  # noqa: SLF001
+
+    protection_id = _entity_id(
+        hass, "switch", f"{mock_casambi.networkId}-weather-protection"
+    )
+    tracking_id = _entity_id(
+        hass,
+        "switch",
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-sun-tracking",
+    )
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+    await hass.async_block_till_done()
+    mock_casambi.setSlider.assert_not_awaited()
+
+    sensor_unit._sensor_cache[0] = 5  # noqa: SLF001
+    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    await hass.async_block_till_done()
+    mock_casambi.setSlider.assert_awaited_once()
+    assert mock_casambi.setSlider.await_args.args[1] == 0
+    mock_casambi.setSlider.reset_mock()
+
+    with patch(
+        "custom_components.casambi_bt.switch.get_sun_position",
+        return_value=(45.0, 180.0),
+    ):
+        await hass.services.async_call(
+            "switch", "turn_on", {ATTR_ENTITY_ID: tracking_id}, blocking=True
+        )
+        mock_casambi.setSlider.assert_not_awaited()
+
+        # Dry again: tracking moves the louvres at its next update.
+        sensor_unit._sensor_cache[0] = 1  # noqa: SLF001
+        api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+        await hass.async_block_till_done()
+        assert api.rain_active is False
+        await hass.services.async_call(
+            "switch", "turn_off", {ATTR_ENTITY_ID: tracking_id}, blocking=True
+        )
+        await hass.services.async_call(
+            "switch", "turn_on", {ATTR_ENTITY_ID: tracking_id}, blocking=True
+        )
+    mock_casambi.setSlider.assert_awaited_once()
+    # Sun at 45 deg due south: angle 45 -> raw round(45 / 142 * 255) = 81.
+    assert mock_casambi.setSlider.await_args.args[1] == 81
+
+
 async def test_weather_protection_off_does_nothing(
     hass: HomeAssistant,
     mock_casambi: MagicMock,

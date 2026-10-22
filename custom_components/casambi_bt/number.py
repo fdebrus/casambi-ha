@@ -98,7 +98,7 @@ class CasambiLouvreSettingNumber(CasambiUnitConfigEntity, RestoreNumber):
         """Set the value."""
         self._attr_native_value = value
         self._values[self._obj.uuid] = value
-        self.async_write_ha_state()
+        self._write_state()
 
 
 class CasambiSunOffsetNumber(CasambiLouvreSettingNumber):

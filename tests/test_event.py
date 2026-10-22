@@ -157,6 +157,39 @@ async def test_button_entity_restored_from_registry(
     assert hass.states.get(entity_id) is not None
 
 
+async def test_disabled_button_entity_ignores_events(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a button disabled in the registry does not break on a press.
+
+    Home Assistant refuses to add a disabled entity, so writing its state
+    on an event used to raise; the bus event is still fired.
+    """
+    mock_config_entry.add_to_hass(hass)
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        "event",
+        DOMAIN,
+        f"{NETWORK_ID}-switch-7-3",
+        config_entry=mock_config_entry,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(entry.entity_id) is None
+
+    events = async_capture_events(hass, EVENT_BUTTON)
+    handler = _get_switch_handler(mock_casambi)
+    handler(_make_switch_event(3, 7, ButtonEventType.PRESS))
+    await hass.async_block_till_done()
+
+    assert hass.states.get(entry.entity_id) is None
+    assert len(events) == 1
+
+
 async def test_button_entity_follows_the_connection(
     hass: HomeAssistant,
     mock_casambi: MagicMock,

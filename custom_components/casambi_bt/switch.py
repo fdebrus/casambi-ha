@@ -36,7 +36,11 @@ from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_interval,
 )
-from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.helpers.restore_state import (
+    ExtraStoredData,
+    RestoredExtraData,
+    RestoreEntity,
+)
 
 from . import CasambiApi, CasambiConfigEntry
 from .binary_sensor import PACKET_RAIN, RAIN_THRESHOLD
@@ -161,6 +165,35 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
+class CasambiRestoredSwitch(SwitchEntity, RestoreEntity):
+    """A switch whose own on/off setting survives restarts and reloads.
+
+    The state Home Assistant stores at shutdown is whatever the state
+    machine holds, and these switches read "unavailable" whenever the
+    network does; restored from that, they would come back off after
+    every restart or reload during an outage. The setting is therefore
+    kept as extra data, the way RestoreNumber keeps its value.
+    """
+
+    _attr_is_on: bool | None = False
+
+    @property
+    def extra_restore_state_data(self) -> ExtraStoredData:
+        """Keep the setting itself, whatever the entity state is."""
+        return RestoredExtraData({"is_on": self._attr_is_on})
+
+    async def _async_restore_is_on(self) -> None:
+        """Take the setting back from the last run."""
+        extra = await self.async_get_last_extra_data()
+        if extra is not None:
+            self._attr_is_on = bool(extra.as_dict().get("is_on"))
+            return
+        # Before the extra data existed only the state was stored.
+        last_state = await self.async_get_last_state()
+        if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
+            self._attr_is_on = last_state.state == STATE_ON
+
+
 class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
     """A Casambi unit that only switches an external load on and off.
 
@@ -201,51 +234,46 @@ class CasambiRelaySwitch(CasambiUnitEntity, SwitchEntity):
         await self._async_casa_command(
             self._api.casa.setControlValue(self._obj, self._control, 1)
         )
-        self.async_write_ha_state()
+        self._write_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Open the relay."""
         await self._async_casa_command(
             self._api.casa.setControlValue(self._obj, self._control, 0)
         )
-        self.async_write_ha_state()
+        self._write_state()
 
 
-class CasambiLouvreAutomationSwitch(
-    CasambiUnitConfigEntity, SwitchEntity, RestoreEntity
-):
-    """A switch of the louvre automation whose state survives a restart.
+class CasambiLouvreAutomationSwitch(CasambiUnitConfigEntity, CasambiRestoredSwitch):
+    """A switch of the louvre automation whose setting survives a restart.
 
-    The state is restored when the entity is added and made to take effect
-    by ``_apply``, which also runs on every change.
+    The setting is restored when the entity is added and made to take
+    effect by ``_apply``, which also runs on every change.
     """
 
-    _attr_is_on = False
     _obj: Unit
 
     async def async_added_to_hass(self) -> None:
-        """Restore the previous state and make it take effect."""
+        """Restore the previous setting and make it take effect."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state in (STATE_ON, STATE_OFF):
-            self._attr_is_on = last_state.state == STATE_ON
+        await self._async_restore_is_on()
         self._apply()
 
     @callback
     def _apply(self) -> None:
-        """Make the current state take effect."""
+        """Make the current setting take effect."""
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         """Turn the automation on."""
         self._attr_is_on = True
         self._apply()
-        self.async_write_ha_state()
+        self._write_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the automation off."""
         self._attr_is_on = False
         self._apply()
-        self.async_write_ha_state()
+        self._write_state()
 
 
 class CasambiSunTrackingSwitch(CasambiLouvreAutomationSwitch):
@@ -298,7 +326,8 @@ class CasambiSunTrackingSwitch(CasambiLouvreAutomationSwitch):
 
     @callback
     def _interval_update(self, _now: Any) -> None:
-        self.hass.async_create_task(self._async_apply())
+        # Owned by the entry, so an unload cancels it.
+        self._config_entry.async_create_task(self.hass, self._async_apply())
 
     def _temperature_bias(self) -> float:
         """Return the temperature-dependent offset in degrees."""
@@ -447,17 +476,17 @@ class CasambiSensorEnableSwitch(CasambiBroadcastUnitEntity, SwitchEntity):
         await self._async_casa_command(
             self._api.casa.setControlValue(self._obj, self._control, 1)
         )
-        self.async_write_ha_state()
+        self._write_state()
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Disable the sensor element."""
         await self._async_casa_command(
             self._api.casa.setControlValue(self._obj, self._control, 0)
         )
-        self.async_write_ha_state()
+        self._write_state()
 
 
-class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, RestoreEntity):
+class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch):
     """Protects the pergola based on the weather readings.
 
     While on: rain closes the louvres (sealed roof); wind at or above the
@@ -470,7 +499,6 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
     """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _attr_is_on = False
 
     def __init__(
         self,
@@ -507,11 +535,9 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
         self._reading = 0
 
     async def async_added_to_hass(self) -> None:
-        """Restore state and start listening to the weather sources."""
+        """Restore the setting and start listening to the weather sources."""
         await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None and last_state.state == STATE_ON:
-            self._attr_is_on = True
+        await self._async_restore_is_on()
         for unit in self._sensor_platforms:
             self._api.register_unit_updates(unit, self._sensor_update)
         if self._rain_entity:
@@ -568,7 +594,10 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, SwitchEntity, Restore
     def _secure(self, unit: Unit, retract: bool) -> None:
         """Retract a screen or close a louvre in the background."""
         self._pending.pop(unit.uuid, None)
-        self.hass.async_create_task(self._async_secure(unit, retract))
+        # Owned by the entry, so an unload cancels it.
+        self._config_entry.async_create_task(
+            self.hass, self._async_secure(unit, retract)
+        )
 
     async def _async_secure(self, unit: Unit, retract: bool) -> None:
         """Send one protective command; keep it pending if it fails.

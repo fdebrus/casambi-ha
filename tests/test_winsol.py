@@ -255,8 +255,9 @@ async def test_louvre_cover(
     assert target.uuid == WINSOL_LOUVRE_UUID
     assert value == 102
 
-    # Moving after a position command (start/stop bit clear): setting the
-    # bit would reverse the louvres, so stop leaves them alone.
+    # With the start/stop bit clear (at rest, or moving after a position
+    # command, which the louvres don't report) setting the bit would start
+    # or reverse the louvres, so stop sends nothing.
     await hass.services.async_call(
         COVER_DOMAIN,
         SERVICE_STOP_COVER,
@@ -704,6 +705,201 @@ async def test_louvres_open_close_like_wall_button(
     await call(SERVICE_OPEN_COVER)
     assert _bit_writes(mock_casambi)[-1] == (36, 1)
     mock_casambi.setSlider.assert_not_awaited()
+
+
+async def test_louvres_reverse_while_running(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test open during a close started from Home Assistant.
+
+    Like pressing the button twice, the bit is cleared and set again. The
+    motor echoes both writes (a clear with the stale rest, then the set
+    bit); neither is a rest or a new run, so the louvres keep showing
+    opening. After the stop that follows, the stop position is the end of
+    a run whose direction is known, not a position-driven move the other
+    way.
+    """
+    await _setup(hass, mock_config_entry)
+    entity_id = _entity_id(
+        hass,
+        COVER_DOMAIN,
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover",
+    )
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+    handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+    async def report(packet: str) -> None:
+        louvre.setStateFromBytes(bytes.fromhex(packet))
+        handler(louvre)
+        await hass.async_block_till_done()
+
+    async def call(service: str) -> None:
+        await hass.services.async_call(
+            COVER_DOMAIN, service, {ATTR_ENTITY_ID: entity_id}, blocking=True
+        )
+
+    await report("020000f00f")
+    await call(SERVICE_CLOSE_COVER)
+    await report("410100f01f")
+    assert hass.states.get(entity_id).state == "closing"
+
+    await call(SERVICE_OPEN_COVER)
+    assert _bit_writes(mock_casambi) == [(36, 1), (36, 0), (36, 1)]
+    await report("410100f00f")
+    await report("410100f01f")
+    assert hass.states.get(entity_id).state == "opening"
+
+    # Stop: the stale rest (255) is echoed, then the real stop at 153.
+    await call(SERVICE_STOP_COVER)
+    assert _bit_writes(mock_casambi)[-1] == (36, 0)
+    await report("410100f00f")
+    await report("4101009009")
+    state = hass.states.get(entity_id)
+    assert state.state == "open"
+    assert state.attributes[ATTR_CURRENT_POSITION] == 60
+
+    # The last run opened, so the bit would close: close uses it, open
+    # would have to send a position.
+    await call(SERVICE_CLOSE_COVER)
+    assert _bit_writes(mock_casambi)[-1] == (36, 1)
+    mock_casambi.setSlider.assert_not_awaited()
+
+
+async def test_louvres_forget_the_direction_when_the_link_drops(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a reconnect does not trust the direction learnt before.
+
+    The wall button may have run the louvres any number of times while
+    Home Assistant could not see them, so the bit may go either way: open
+    and close fall back to a position until a run is seen again.
+    """
+    await _setup(hass, mock_config_entry)
+    api = mock_config_entry.runtime_data
+    entity_id = _entity_id(
+        hass,
+        COVER_DOMAIN,
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover",
+    )
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+    handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+    async def report(packet: str) -> None:
+        louvre.setStateFromBytes(bytes.fromhex(packet))
+        handler(louvre)
+        await hass.async_block_till_done()
+
+    async def call(service: str) -> None:
+        await hass.services.async_call(
+            COVER_DOMAIN, service, {ATTR_ENTITY_ID: entity_id}, blocking=True
+        )
+
+    # A button run from fully open stops at 103: the last run closed.
+    await report("020000f00f")
+    await report("410100f01f")
+    await report("410100f00f")
+    await report("4101007006")
+
+    mock_casambi.connected = False
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id).state == "unavailable"
+    mock_casambi.connected = True
+    api._notify_connection_state()  # noqa: SLF001
+    await report("4101007006")
+
+    # Open would have used the bit before the drop; now it sends a position.
+    await call(SERVICE_OPEN_COVER)
+    mock_casambi.setControlValue.assert_not_awaited()
+    mock_casambi.setSlider.assert_awaited_once()
+    assert mock_casambi.setSlider.await_args.args[1] == 255
+
+
+async def test_screen_open_reverses_a_position_move(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test open and close during a move started with a position.
+
+    The screen ignores a position behind it, so the opposite end is
+    reached with the bit, which reverses the motor; the same end is just
+    sent as a position, or nothing when it is the target already.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        entity_id = _entity_id(
+            hass,
+            COVER_DOMAIN,
+            f"{mock_casambi.networkId}-unit-{WINSOL_SCREEN_UUID}-cover",
+        )
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+        async def report(packet: str) -> None:
+            screen.setStateFromBytes(bytes.fromhex(packet))
+            handler(screen)
+            await hass.async_block_till_done()
+
+        async def call(service: str) -> None:
+            await hass.services.async_call(
+                COVER_DOMAIN, service, {ATTR_ENTITY_ID: entity_id}, blocking=True
+            )
+
+        # At rest, open. A position command sends the screen to 60 %.
+        await report("818b080000")
+        clock[0] = 1100.0
+        await hass.services.async_call(
+            COVER_DOMAIN,
+            SERVICE_SET_COVER_POSITION,
+            {ATTR_ENTITY_ID: entity_id, ATTR_POSITION: 60},
+            blocking=True,
+        )
+        assert mock_casambi.setLevel.await_args.args[1] == 102
+        await report("818b086006")
+        assert hass.states.get(entity_id).state == "closing"
+
+        # Close goes the same way: the end is sent as a position.
+        clock[0] = 1105.0
+        await call(SERVICE_CLOSE_COVER)
+        assert mock_casambi.setLevel.await_args.args[1] == 255
+        mock_casambi.setControlValue.assert_not_awaited()
+        await report("818b08f00f")
+        assert hass.states.get(entity_id).state == "closing"
+        await call(SERVICE_CLOSE_COVER)
+        assert mock_casambi.setLevel.await_count == 2
+
+        # Open goes the other way: only the bit reverses the motor.
+        clock[0] = 1110.0
+        await call(SERVICE_OPEN_COVER)
+        assert _bit_writes(mock_casambi) == [(36, 1)]
+        assert mock_casambi.setLevel.await_count == 2
+        state = hass.states.get(entity_id)
+        assert state.state == "opening"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 71
+
+        # The motor echoes the bit with the stale target: still opening.
+        await report("828b08f01f")
+        assert hass.states.get(entity_id).state == "opening"
+
+        # Stop clears the bit, like any button run.
+        clock[0] = 1115.0
+        await call(SERVICE_STOP_COVER)
+        assert _bit_writes(mock_casambi)[-1] == (36, 0)
+        await report("818b08f00f")
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes[ATTR_CURRENT_POSITION] == 86
 
 
 @pytest.mark.parametrize(

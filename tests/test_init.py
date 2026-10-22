@@ -2,7 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
-from CasambiBt.errors import AuthenticationError
+from CasambiBt.errors import AuthenticationError, NetworkUpdateError
+import httpx
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -111,6 +112,32 @@ async def test_setup_retries_when_the_cloud_is_down(
         for flow in hass.config_entries.flow.async_progress()
         if flow["context"].get("source") == "reauth"
     ]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [NetworkUpdateError("Update failed: 502"), httpx.ConnectError("unreachable")],
+)
+async def test_setup_retries_when_the_network_update_fails(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    error: Exception,
+) -> None:
+    """Test that a cloud failure while refreshing the network is retried.
+
+    The library only falls back to its cache when the login itself can't
+    reach the cloud; a bad answer or a dropped connection afterwards
+    escapes as its own error, which must not fail the entry for good.
+    """
+    mock_casambi.connect.side_effect = error
+
+    mock_config_entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
 async def test_diagnostics(

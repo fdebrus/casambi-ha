@@ -43,7 +43,9 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-USER_SCHEMA = vol.Schema(
+# Typed Any: newer cores type their flow schemas as probatio.Schema while
+# older ones use voluptuous; both take this schema at run time.
+USER_SCHEMA: Any = vol.Schema(
     {
         vol.Required(CONF_ADDRESS): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
@@ -55,7 +57,7 @@ USER_SCHEMA = vol.Schema(
 # Settings asked at setup that the options flow can change later.
 _USER_FLAGS = (CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER)
 
-REAUTH_SCHEMA = vol.Schema(
+REAUTH_SCHEMA: Any = vol.Schema(
     {
         vol.Required(CONF_PASSWORD): cv.string,
     }
@@ -120,7 +122,7 @@ class OptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        schema = vol.Schema(
+        schema: Any = vol.Schema(
             {
                 vol.Required(
                     CONF_IMPORT_GROUPS,

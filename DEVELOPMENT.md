@@ -28,18 +28,26 @@ operation, not an error.
   `RECONNECT_BACKOFF_MAX` (5 min). When Home Assistant reports the device
   as out of range the delay jumps to `RECONNECT_BACKOFF_NO_DEVICE` (60 s)
   at once — retrying faster cannot help.
-* **Failures that retrying cannot fix.** A `ProtocolError` is retried once
-  and then abandoned; an `AuthenticationError` (the network password was
-  changed) starts a reauth flow instead of looping.
+* **Protocol errors are retried slowly, not abandoned.** After two in a
+  row the delay goes straight to `RECONNECT_BACKOFF_MAX`. A changed
+  network key shows up here too: `Casambi.reconnect()` only redoes the BLE
+  handshake and never logs in, so it cannot raise `AuthenticationError`;
+  the reauth flow is only ever started from the initial connect (setup or
+  a Home Assistant restart).
 * **Writes trigger reconnects.** Entities reach the library through
   `CasambiProxy`, which wraps every coroutine call: a `BluetoothError`
   during a write with the library no longer reporting itself connected
   means it gave the link up without running its disconnect callbacks, so
-  a reconnect is scheduled. A write that fails while the library still
-  says connected (a timeout) is only reported: the library's reconnect
-  would return at once, and a real drop follows through the callbacks. Unlike upstream the error is re-raised, so the
-  failed command is still reported to the caller as a `HomeAssistantError`
-  rather than silently doing nothing.
+  the entities are told the link is down and a reconnect is scheduled,
+  exactly as after a reported disconnect. A write that fails while the
+  library still says connected (a timeout) is only reported: the
+  library's reconnect would return at once, and a real drop follows
+  through the callbacks. The library also reconnects on its own inside a
+  write; a write that succeeds while the link is marked down therefore
+  marks it up again without waiting for the reconnect task. Unlike
+  upstream the error is re-raised, so the failed command is still
+  reported to the caller as a `HomeAssistantError` rather than silently
+  doing nothing.
 * **Entities follow the connection.** `CasambiApi` fans out connection
   state changes to entities (`register_connection_updates`), so the
   **Status** binary sensor and every entity's availability update the
@@ -81,12 +89,19 @@ of operations.
    before its first attempt, and a reconnect that returns while
    `casa.connected` is still false counts as a failed attempt.
 
-The screen cover also forgets its motion estimate, the direction of its
-last run and its rest position when the link drops
-(`_connection_callback`): the screen may have been driven meanwhile, so
-the first state pushed after a reconnect is taken as rest, and a button
-run already under way then is left alone until it ends and the screen
-reports where it stopped.
+The motor covers also forget the direction of their last run and their
+rest position when the link drops (`_connection_callback`), the screen
+its motion estimate as well: the motor may have been driven by the wall
+button meanwhile, so the first state pushed after a reconnect is taken as
+rest, open and close send a position until a run is seen again, and a
+button run already under way then is left alone until it ends and the
+motor reports where it stopped.
+
+The automation switches (sun tracking, temperature control, frost lock,
+weather protection) keep their setting in the restore store's extra data
+(`extra_restore_state_data`) rather than reading it back from the entity
+state: that state is "unavailable" whenever the network is, and a restart
+or reload during an outage used to turn them all off.
 
 Two more traps, found by review rather than on the pergola:
 
@@ -215,7 +230,20 @@ bit's direction (up from the closed end, down from the open end, otherwise
 opposite the last run) and drives open/close with the bit whenever that is
 the requested way, so stop can clear it like the button. Otherwise
 open/close send a position, and the subclass handles stop (aim ahead on
-screens, nothing on louvres).
+screens, nothing on louvres). Open during a close (or the reverse) started
+with the bit clears and sets it again, like pressing the button twice.
+
+The library applies the bit to the unit the moment Home Assistant writes
+it, so a run it starts is recorded then (`_bit_run_started`), and the
+motor's echoes within `BIT_ECHO_SECONDS` (a clear with the stale rest
+when reversing, then the set bit) are not read as a rest or a new run.
+A position change at rest with no run in between is a position-driven
+move whose direction is the way it went; the stop position reported after
+a bit run is only read that way when the run's direction is unknown, since
+after a reversal the stale rest it is compared with predates two runs.
+On a screen, open or close during a position-driven move sends the end as
+a position when it lies ahead and sets the bit, which reverses the motor,
+when it lies behind.
 
 So the toggle reverses, and the vendor app has no working stop either. A
 position sent while the screen moves is honoured only when it lies ahead

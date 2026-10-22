@@ -130,7 +130,7 @@ async def test_reconnect_waits_longer_without_device(
     mock_casambi.reconnect.assert_awaited_once()
 
 
-async def test_reconnect_retries_protocol_error_once(
+async def test_reconnect_keeps_retrying_protocol_errors(
     hass: HomeAssistant,
     mock_casambi: MagicMock,
     mock_bluetooth: MagicMock,
@@ -293,6 +293,95 @@ async def test_write_failure_triggers_reconnect(
 
     # The failed write is reported to the caller *and* starts a reconnect.
     mock_casambi.reconnect.assert_awaited_once()
+
+
+async def test_write_failure_takes_the_entities_down(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a write the library gave the link up in marks it down.
+
+    The library runs no disconnect callback in that case, so the status
+    and the unit entities would stay up until the reconnect succeeds.
+    """
+    await _setup(hass, mock_config_entry)
+    status = next(
+        s.entity_id
+        for s in hass.states.async_all("binary_sensor")
+        if "status" in s.entity_id
+    )
+    light = er.async_get(hass).async_get_entity_id(
+        LIGHT_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{LIGHT_UUID}-light"
+    )
+    assert light is not None
+
+    async def _failing_write(*_args: object) -> None:
+        mock_casambi.connected = False
+        raise BluetoothError
+
+    mock_casambi.setLevel.side_effect = _failing_write
+    started = asyncio.Event()
+
+    async def _hang(_device: object) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    mock_casambi.reconnect.side_effect = _hang
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            LIGHT_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: light}, blocking=True
+        )
+    async with asyncio.timeout(5):
+        await started.wait()
+
+    assert hass.states.get(status).state == "off"
+    assert hass.states.get(light).state == "unavailable"
+
+
+async def test_write_that_reconnects_inside_the_library_restores_the_link(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a successful write while the link is down brings it back.
+
+    The library reconnects on its own inside a write; the entities need
+    not wait for the reconnect task's next attempt to learn it.
+    """
+    api = await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    status = next(
+        s.entity_id
+        for s in hass.states.async_all("binary_sensor")
+        if "status" in s.entity_id
+    )
+
+    mock_casambi.connected = False
+    started = asyncio.Event()
+
+    async def _hang(_device: object) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    mock_casambi.reconnect.side_effect = _hang
+    disconnect()
+    async with asyncio.timeout(5):
+        await started.wait()
+    assert hass.states.get(status).state == "off"
+
+    async def _write(*_args: object) -> None:
+        mock_casambi.connected = True
+
+    mock_casambi.setLevel.side_effect = _write
+    await api.casa.setLevel(mock_casambi.units[0], 0)
+    await hass.async_block_till_done()
+
+    assert api.available
+    assert hass.states.get(status).state == "on"
 
 
 async def test_entities_follow_the_connection_state(
