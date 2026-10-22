@@ -18,8 +18,10 @@ from CasambiBt.errors import (
     BluetoothDeviceNotFoundError,
     BluetoothError,
     NetworkNotFoundError,
+    NetworkUpdateError,
     ProtocolError,
 )
+import httpx
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
@@ -273,6 +275,13 @@ class CasambiApi:
             raise ConfigEntryAuthFailed(
                 f"Failed to authenticate to network {self.address}"
             ) from err
+        except (NetworkUpdateError, httpx.RequestError) as err:
+            # The cloud answered badly or not at all while the network
+            # configuration was being refreshed (the library only keeps
+            # going offline when the login itself can't reach it).
+            raise ConfigEntryNotReady(
+                f"The Casambi cloud could not be reached: {err}"
+            ) from err
         except Exception as err:  # pylint: disable=broad-except
             raise ConfigEntryError(
                 f"Unexpected error creating network {self.address}"
@@ -369,8 +378,7 @@ class CasambiApi:
                         "Connection to the Casambi network %s was re-established",
                         self.address,
                     )
-                self._link_up = True
-                self._notify_connection_state()
+                self._link_restored()
                 return
 
             if not warned and monotonic() - started >= RECONNECT_WARN_AFTER:
@@ -489,6 +497,12 @@ class CasambiApi:
         self._schedule_reconnect()
 
     @callback
+    def _link_restored(self) -> None:
+        """Mark the link up and tell the entities."""
+        self._link_up = True
+        self._notify_connection_state()
+
+    @callback
     def _schedule_reconnect(self) -> None:
         """Start the reconnect task unless one is already running."""
         if self._closing:
@@ -605,15 +619,21 @@ class CasambiProxy:
 
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
-                return await attr(*args, **kwargs)
-            except BluetoothError:
+                result = await attr(*args, **kwargs)
+            except (BluetoothError, BluetoothDeviceNotFoundError, ProtocolError):
                 # A write can fail while the library still considers itself
                 # connected (a timeout, say); its reconnect would then return
                 # at once. Only act when it has given the connection up
-                # without running the disconnect callbacks.
+                # without running the disconnect callbacks: the link is down
+                # for the entities as much as after a reported disconnect.
                 if not self._casa.connected:
-                    _LOGGER.info("Triggering a reconnect after a write failed")
-                    self._api._schedule_reconnect()  # noqa: SLF001
+                    _LOGGER.info("The link is gone after a write failed")
+                    self._api._casa_disconnect()  # noqa: SLF001
                 raise
+            # The library reconnects on its own inside a write; the entities
+            # need not wait for the reconnect task's next attempt to know.
+            if not self._api.available and self._casa.connected:
+                self._api._link_restored()  # noqa: SLF001
+            return result
 
         return async_wrapper

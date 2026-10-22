@@ -58,6 +58,11 @@ STOP_AHEAD_SECONDS: Final = 1.5
 # How often the estimated position of a moving screen is refreshed.
 MOTION_UPDATE_INTERVAL: Final = timedelta(seconds=1)
 
+# After Home Assistant writes the start/stop bit, the motor echoes each
+# write as a state push within this many seconds (0.5 s in the captures).
+# Those echoes carry nothing the integration doesn't already know.
+BIT_ECHO_SECONDS: Final = 3.0
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -233,6 +238,12 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         self._last_raising: bool | None = None
         self._rest_raw: int | None = None
         self._was_running = False
+        # Whether a bit run happened since the motor last rested: its stop
+        # position must not be read as a position-driven move.
+        self._ran_since_rest = False
+        # When Home Assistant last set the bit itself, to tell the motor's
+        # echoes of that write from runs started elsewhere.
+        self._commanded_at: float | None = None
         self._note_direction(unit)
 
     @abstractmethod
@@ -243,14 +254,48 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
     def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
         """Return the command moving the unit to a raw position."""
 
+    def _commanded_recently(self) -> bool:
+        """Return True while the motor may still echo a bit written by HA."""
+        return (
+            self._commanded_at is not None
+            and monotonic() - self._commanded_at < BIT_ECHO_SECONDS
+        )
+
+    def _bit_run_started(self, raising: bool, raw_end: int) -> None:
+        """Record a run Home Assistant just started by setting the bit.
+
+        The library applies the bit to the unit at once, so the run is
+        known before the motor echoes it; the echoes (a transient clear when
+        reversing, then the set bit) must not re-derive the direction.
+        """
+        self._last_raising = raising
+        self._was_running = True
+        self._ran_since_rest = True
+        self._commanded_at = monotonic()
+        # Show the run now rather than at the motor's echo.
+        self._write_state()
+
     def _note_direction(self, unit: Unit) -> None:
-        """Follow the direction of runs and the rest position."""
+        """Follow the direction of runs and the rest position.
+
+        A bit run is known by its direction when it starts. A position
+        change at rest without a run in between is a position-driven move
+        (the app, or a position command), and its direction is the way the
+        position went. After a bit run the motor first echoes its stop with
+        the stale rest position, then reports where it actually stopped;
+        that step is only read as a move when the run's direction is
+        unknown, since after a reversal it would point the wrong way.
+        """
         running = self._toggle_running(unit)
         raw = self._raw_position(unit)
+        if not running and self._commanded_recently():
+            # The echo of the stop before a reversal: not a rest.
+            return
         if running and not self._was_running:
             predicted = self._toggle_direction()
             if predicted is not None:
                 self._last_raising = predicted
+            self._ran_since_rest = True
         elif (
             not running
             and not self._was_running
@@ -258,7 +303,9 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             and self._rest_raw is not None
             and raw != self._rest_raw
         ):
-            self._last_raising = raw > self._rest_raw
+            if not self._ran_since_rest or self._last_raising is None:
+                self._last_raising = raw > self._rest_raw
+            self._ran_since_rest = False
         self._was_running = running
         if not running and raw is not None:
             self._rest_raw = raw
@@ -281,28 +328,47 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         self._note_direction(unit)
         super()._change_callback(unit)
 
+    @callback
+    def _connection_callback(self) -> None:
+        """Forget the direction when the link drops.
+
+        The wall button may be used any number of times while Home
+        Assistant can't see the motor, so neither the last direction nor
+        the rest position says anything once the link is back; the first
+        state pushed then is taken as rest.
+        """
+        if not self._api.available:
+            self._last_raising = None
+            self._rest_raw = None
+            self._was_running = False
+            self._ran_since_rest = False
+            self._commanded_at = None
+        super()._connection_callback()
+
+    async def _set_bit(self, value: int) -> None:
+        """Write the start/stop bit."""
+        assert self._toggle_control is not None
+        await self._async_casa_command(
+            self._api.casa.setControlValue(self._obj, self._toggle_control, value)
+        )
+
     async def _drive_to_end(self, raw_end: int) -> None:
         """Run to an end like the wall button when the bit goes that way."""
-        control = self._toggle_control
         raising = raw_end == CASA_RAW_MAX
-        if control is not None:
+        if self._toggle_control is not None:
             if self._toggle_running():
                 if self._last_raising == raising:
                     return
                 # Like pressing the button twice: stop, then run back.
-                await self._async_casa_command(
-                    self._api.casa.setControlValue(self._obj, control, 0)
-                )
-                await self._async_casa_command(
-                    self._api.casa.setControlValue(self._obj, control, 1)
-                )
+                await self._set_bit(0)
+                await self._set_bit(1)
+                self._bit_run_started(raising, raw_end)
                 return
             if self._rest_raw == raw_end:
                 return
             if self._toggle_direction() == raising:
-                await self._async_casa_command(
-                    self._api.casa.setControlValue(self._obj, control, 1)
-                )
+                await self._set_bit(1)
+                self._bit_run_started(raising, raw_end)
                 return
         await self._async_casa_command(self._send_position(raw_end))
 
@@ -332,9 +398,10 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         """
         if self._toggle_control is None or not self._toggle_running():
             return
-        await self._async_casa_command(
-            self._api.casa.setControlValue(self._obj, self._toggle_control, 0)
-        )
+        # A stop asked for: its echo is a real rest, not a reversal's.
+        self._commanded_at = None
+        await self._set_bit(0)
+        self._write_state()
 
 
 class CasambiLouvreCover(CasambiMotorCover):
@@ -514,6 +581,10 @@ class CasambiScreenCover(CasambiMotorCover):
 
         button_run = self._toggle_running(unit)
         if button_run != self._button_run:
+            if not button_run and self._commanded_recently():
+                # The echo of the stop before a reversal Home Assistant
+                # asked for: the motion it started goes on.
+                return False
             self._button_run = button_run
             if button_run:
                 # Started like the wall button: the reported target is stale
@@ -574,10 +645,8 @@ class CasambiScreenCover(CasambiMotorCover):
 
     @callback
     def _change_callback(self, unit: Unit) -> None:
-        if self._track_motion(unit) and self._cancel_tick is None:
-            self._cancel_tick = async_track_time_interval(
-                self.hass, self._tick, MOTION_UPDATE_INTERVAL
-            )
+        if self._track_motion(unit):
+            self._ensure_ticking()
         super()._change_callback(unit)
 
     @callback
@@ -585,8 +654,7 @@ class CasambiScreenCover(CasambiMotorCover):
         """Forget the motion when the link drops.
 
         The screen may be driven while Home Assistant can't see it, so the
-        last target and the direction of the last run are no reference for
-        where it is or which way the button sends it when the link returns:
+        last target is no reference for where it is when the link returns:
         the first state pushed after a reconnect is taken as rest.
         """
         if not self._api.available:
@@ -594,17 +662,50 @@ class CasambiScreenCover(CasambiMotorCover):
             self._move_start = None
             self._button_run = False
             self._settling = False
-            self._last_raising = None
-            self._rest_raw = None
             self._stop_ticking()
         super()._connection_callback()
+
+    def _bit_run_started(self, raising: bool, raw_end: int) -> None:
+        """Start the motion estimate for a run Home Assistant set off."""
+        self._button_run = True
+        if self._start_motion(raw_end, monotonic()):
+            self._ensure_ticking()
+        super()._bit_run_started(raising, raw_end)
+
+    async def _drive_to_end(self, raw_end: int) -> None:
+        """Run to an end, also from the middle of a position-driven move.
+
+        A moving screen honours a position ahead of it and ignores one
+        behind it, so the same direction gets the end as a position and the
+        opposite one the bit, which reverses the motor.
+        """
+        if (
+            self._toggle_control is not None
+            and not self._toggle_running()
+            and self._moving()
+            and self._target is not None
+        ):
+            if (self._target > self._move_from) == (raw_end > self._move_from):
+                if self._target != raw_end:
+                    await self._async_casa_command(self._send_position(raw_end))
+                return
+            await self._set_bit(1)
+            self._bit_run_started(raw_end == CASA_RAW_MAX, raw_end)
+            return
+        await super()._drive_to_end(raw_end)
 
     @callback
     def _tick(self, _now: Any) -> None:
         """Refresh the estimated position while the screen moves."""
         if not self._moving():
             self._stop_ticking()
-        self.async_write_ha_state()
+        self._write_state()
+
+    def _ensure_ticking(self) -> None:
+        if self._cancel_tick is None:
+            self._cancel_tick = async_track_time_interval(
+                self.hass, self._tick, MOTION_UPDATE_INTERVAL
+            )
 
     def _stop_ticking(self) -> None:
         if self._cancel_tick is not None:

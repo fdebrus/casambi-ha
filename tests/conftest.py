@@ -193,9 +193,10 @@ def make_winsol_star_louvre_unit() -> Unit:
 def make_winsol_screen_unit() -> Unit:
     """Create a unit modeled on the Winsol SO! V4.1 screen fixture.
 
-    Control layout from the real fixture definition: travel-time sensors
-    "Time Up" and "Time Down" (bits 0-27, channels 1 and 2), dimmer "Screen
-    Position" (bits 28-35), onoff $toggle (bit 36).
+    Control layout from the real fixture definition: one multiplexed
+    SENSOR control carrying the travel times "Time Up" and "Time Down"
+    (bits 0-27, channels 1 and 2), dimmer "Screen Position" (bits 28-35),
+    onoff $toggle (bit 36).
     """
     state = UnitState()
     state.dimmer = 64
@@ -281,6 +282,29 @@ def make_sensor_platform_unit() -> Unit:
     return unit
 
 
+async def apply_control_value(unit: Unit, control: UnitControl, value: int) -> None:
+    """Do what the library's setControlValue does to the unit itself.
+
+    It writes the control's bits into the unit's current raw state, sends
+    that, and applies it to the unit at once without notifying anyone;
+    the network echoes the new state later. The integration relies on the
+    local part (the start/stop bit reads as set right after the write).
+    """
+    state = unit.state
+    raw = bytearray(
+        state.raw_state
+        if state is not None and state.raw_state is not None
+        else bytes(unit.unitType.stateLength)
+    )
+    byte_start, bit_start = divmod(control.offset, 8)
+    n_bytes = (control.length + bit_start + 7) // 8
+    current = int.from_bytes(raw[byte_start : byte_start + n_bytes], "little")
+    mask = ((1 << control.length) - 1) << bit_start
+    current = (current & ~mask) | ((value & ((1 << control.length) - 1)) << bit_start)
+    raw[byte_start : byte_start + n_bytes] = current.to_bytes(n_bytes, "little")
+    unit.setStateFromBytes(bytes(raw))
+
+
 @pytest.fixture
 def mock_casambi() -> Generator[MagicMock]:
     """Mock the Casambi library for the integration and the config flow."""
@@ -292,6 +316,7 @@ def mock_casambi() -> Generator[MagicMock]:
         casa.connected = True
 
     casa.reconnect = AsyncMock(side_effect=_reconnect)
+    casa.setControlValue = AsyncMock(side_effect=apply_control_value)
     casa.networkId = NETWORK_ID
     casa.networkName = NETWORK_NAME
 

@@ -112,5 +112,5 @@ rules:
   strict-typing:
     status: done
     comment: |
-      casambi-bt ships py.typed and the integration passes mypy --strict,
-      enforced in CI on every push.
+      casambi-bt ships py.typed and the integration passes mypy --strict
+      against both supported cores, enforced in CI on every push.

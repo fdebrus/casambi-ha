@@ -229,10 +229,20 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
         """Pick up what this entity needs from a pushed state."""
 
     @callback
-    def async_write_ha_state(self) -> None:
-        """Write the state and remember what was written."""
+    def _write_state(self) -> None:
+        """Write the state and remember what was written.
+
+        Every write of a unit entity goes through here, so that a later
+        push is compared with what Home Assistant really shows. The one
+        exception is the first write, which Home Assistant does itself
+        right after ``async_added_to_hass``; that one is recorded there.
+        """
         self._written = self._snapshot()
-        super().async_write_ha_state()
+        self.async_write_ha_state()
+
+    @callback
+    def _connection_callback(self) -> None:
+        self._write_state()
 
     @callback
     def _change_callback(self, unit: CasambiUnit) -> None:
@@ -242,13 +252,15 @@ class CasambiUnitEntity(CasambiEntity, metaclass=ABCMeta):
         self._apply_update(unit)
         current = self._snapshot()
         if current is _ALWAYS_WRITE or current != self._written:
-            self.async_write_ha_state()
+            self._write_state()
 
     async def async_added_to_hass(self) -> None:
         """Run when the unit is about to be added to hass."""
         await super().async_added_to_hass()
         unit = cast("CasambiUnit", self._obj)
         self._api.register_unit_updates(unit, self._change_callback)
+        # What Home Assistant is about to write as the initial state.
+        self._written = self._snapshot()
 
     async def async_will_remove_from_hass(self) -> None:
         """Run when the unit will be removed from hass."""

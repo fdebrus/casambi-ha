@@ -98,6 +98,9 @@ class CasambiButtonEventEntity(EventEntity):
         self._unit_id = unit_id
         self._button = button
         self._pending: SwitchEvent | None = None
+        # False while Home Assistant has not added the entity: it refuses
+        # one disabled in the registry, which then must not write state.
+        self._added = False
 
         self._attr_unique_id = f"{api.casa.networkId}-switch-{unit_id}-{button}"
         self._attr_translation_placeholders = {"button": str(button)}
@@ -121,6 +124,7 @@ class CasambiButtonEventEntity(EventEntity):
 
     async def async_added_to_hass(self) -> None:
         """Follow the connection and process the triggering event."""
+        self._added = True
         self._api.register_connection_updates(self._connection_callback)
         if self._pending is not None:
             self.handle_event(self._pending)
@@ -128,6 +132,7 @@ class CasambiButtonEventEntity(EventEntity):
 
     async def async_will_remove_from_hass(self) -> None:
         """Stop following the connection."""
+        self._added = False
         self._api.unregister_connection_updates(self._connection_callback)
 
     @callback
@@ -137,5 +142,7 @@ class CasambiButtonEventEntity(EventEntity):
     @callback
     def handle_event(self, event: SwitchEvent) -> None:
         """Handle a switch event for this button."""
+        if not self._added:
+            return
         self._trigger_event(event.event.name.lower())
         self.async_write_ha_state()
