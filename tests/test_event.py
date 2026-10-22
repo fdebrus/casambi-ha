@@ -14,7 +14,7 @@ from custom_components.casambi_bt.const import DOMAIN, EVENT_BUTTON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
-from .conftest import LIGHT_UUID, NETWORK_ID, get_device
+from .conftest import LIGHT_UUID, NETWORK_ID, get_device, setup_entry as _setup
 
 
 def _make_switch_event(
@@ -34,12 +34,6 @@ def _make_switch_event(
 def _get_switch_handler(mock_casambi: MagicMock) -> Callable[[SwitchEvent], None]:
     mock_casambi.registerSwitchEventHandler.assert_called_once()
     return mock_casambi.registerSwitchEventHandler.call_args.args[0]
-
-
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
 
 
 async def test_button_event_fires_bus_event(

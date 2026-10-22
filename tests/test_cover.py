@@ -6,11 +6,7 @@ from CasambiBt import Group, Unit
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.casambi_bt.const import (
-    CONF_IMPORT_GROUPS,
-    CONF_VERTICAL_AS_COVER,
-    DOMAIN,
-)
+from custom_components.casambi_bt.const import CONF_VERTICAL_AS_COVER, DOMAIN
 from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_POSITION,
@@ -19,39 +15,33 @@ from homeassistant.components.cover import (
     SERVICE_OPEN_COVER,
     SERVICE_SET_COVER_POSITION,
 )
-from homeassistant.const import ATTR_ENTITY_ID, CONF_ADDRESS, CONF_PASSWORD
+from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from .conftest import LOUVRE_UUID, NETWORK_ADDRESS, NETWORK_ID
+from .conftest import (
+    NETWORK_ADDRESS,
+    NETWORK_ID,
+    VERTICAL_LIGHT_UUID,
+    setup_entry as _setup,
+)
 
 
 @pytest.fixture
-def cover_config_entry() -> MockConfigEntry:
+def cover_config_entry(mock_config_entry: MockConfigEntry) -> MockConfigEntry:
     """Create a config entry with cover mode enabled."""
     return MockConfigEntry(
         domain=DOMAIN,
         unique_id=NETWORK_ADDRESS,
-        title="Test Network",
-        data={
-            CONF_ADDRESS: NETWORK_ADDRESS,
-            CONF_PASSWORD: "password",
-            CONF_IMPORT_GROUPS: True,
-            CONF_VERTICAL_AS_COVER: True,
-        },
+        title=mock_config_entry.title,
+        data={**mock_config_entry.data, CONF_VERTICAL_AS_COVER: True},
     )
-
-
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
 
 
 def _unit_cover_entity_id(hass: HomeAssistant) -> str:
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(
-        COVER_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{LOUVRE_UUID}-cover"
+        COVER_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{VERTICAL_LIGHT_UUID}-cover"
     )
     assert entity_id is not None
     return entity_id
@@ -69,7 +59,7 @@ async def test_cover_entities_created(
     registry = er.async_get(hass)
 
     unit_entity = registry.async_get_entity_id(
-        COVER_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{LOUVRE_UUID}-cover"
+        COVER_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{VERTICAL_LIGHT_UUID}-cover"
     )
     assert unit_entity is not None
 
@@ -81,7 +71,7 @@ async def test_cover_entities_created(
     # The vertical number entities must not be created in cover mode.
     assert (
         registry.async_get_entity_id(
-            "number", DOMAIN, f"{NETWORK_ID}-unit-{LOUVRE_UUID}-vertical"
+            "number", DOMAIN, f"{NETWORK_ID}-unit-{VERTICAL_LIGHT_UUID}-vertical"
         )
         is None
     )
@@ -134,7 +124,7 @@ async def test_cover_services(
     mock_casambi.setVertical.assert_awaited_once()
     target, vertical = mock_casambi.setVertical.await_args.args
     assert isinstance(target, Unit)
-    assert target.uuid == LOUVRE_UUID
+    assert target.uuid == VERTICAL_LIGHT_UUID
     assert vertical == expected_vertical
 
 

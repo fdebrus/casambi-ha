@@ -182,7 +182,9 @@ def test_unit_type_get_control() -> None:
     assert callable(UnitType.get_control)
 
 
-@pytest.mark.parametrize("name", ["type", "offset", "length", "readonly"])
+@pytest.mark.parametrize(
+    "name", ["type", "offset", "length", "readonly", "default", "min", "max"]
+)
 def test_unit_control_fields(name: str) -> None:
     """Test the UnitControl fields used to decode the Winsol wire format."""
     assert _has_member(UnitControl, name), f"UnitControl.{name} is gone"
@@ -234,6 +236,7 @@ def test_switch_decoder_internals() -> None:
         "RELEASE",
         "HOLD",
         "RELEASE_AFTER_HOLD",
+        "UNKNOWN",
     }
     assert {f.name for f in fields(SwitchEvent)} >= {
         "button_event_index",
@@ -245,7 +248,13 @@ def test_switch_decoder_internals() -> None:
 
 @pytest.mark.parametrize(
     ("cls", "name"),
-    [(Group, "groudId"), (Group, "name"), (Group, "units"), (Scene, "name")],
+    [
+        (Group, "groudId"),
+        (Group, "name"),
+        (Group, "units"),
+        (Scene, "sceneId"),
+        (Scene, "name"),
+    ],
 )
 def test_group_and_scene_fields(cls: type, name: str) -> None:
     """Test the Group and Scene fields used by the group and scene entities."""

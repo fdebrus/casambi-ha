@@ -4,10 +4,10 @@
       "reconfigure": {
         "title": "Reconfigure your Casambi network",
         "data": {
-          "address": "Address (Casambi NetworkID)",
+          "address": "Bluetooth MAC address",
           "password": "[%key:common::config_flow::data::password%]",
-          "import_groups": "Import groups?",
-          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
+          "import_groups": "Import groups",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)"
         }
       },
       "reauth_confirm": {
@@ -19,10 +19,10 @@
       "network": {
         "title": "Configure your Casambi network",
         "data": {
-          "address": "Address (Casambi NetworkID)",
+          "address": "Bluetooth MAC address",
           "password": "[%key:common::config_flow::data::password%]",
-          "import_groups": "Import groups?",
-          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?"
+          "import_groups": "Import groups",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)"
         },
         "description": "Find the bluetooth MAC address (Network ID) in the luminaire details of your Casambi app."
       }
@@ -36,12 +36,9 @@
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
       "bluetooth_error": "Bluetooth doesn't seem to work properly.",
-      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
-      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
       "not_supported": "This device is not a connectable Casambi network.",
       "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
       "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
-      "unknown": "[%key:common::config_flow::error::unknown%]",
       "wrong_network": "The address does not match the configured Casambi network."
     }
   },
@@ -50,8 +47,8 @@
       "init": {
         "title": "Casambi options",
         "data": {
-          "import_groups": "Import groups?",
-          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)?",
+          "import_groups": "Import groups",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)",
           "louvre_azimuth": "Pergola orientation (azimuth in degrees, 180 = south)",
           "wind_threshold": "Wind threshold for retracting screens and closing louvres (km/h)",
           "temperature_entity": "Temperature sensor for temperature control and the frost lock",

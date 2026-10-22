@@ -22,13 +22,7 @@ from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 
-from .conftest import LIGHT_UUID, LOUVRE_UUID, NETWORK_ID
-
-
-async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:
-    entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
-    await hass.async_block_till_done()
+from .conftest import LIGHT_UUID, NETWORK_ID, VERTICAL_LIGHT_UUID, setup_entry as _setup
 
 
 async def test_light_state_and_services(
@@ -84,7 +78,7 @@ async def test_vertical_number(
 
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id(
-        NUMBER_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{LOUVRE_UUID}-vertical"
+        NUMBER_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{VERTICAL_LIGHT_UUID}-vertical"
     )
     assert entity_id is not None
 
@@ -95,7 +89,7 @@ async def test_vertical_number(
     # No cover should exist in this mode.
     assert (
         registry.async_get_entity_id(
-            "cover", DOMAIN, f"{NETWORK_ID}-unit-{LOUVRE_UUID}-cover"
+            "cover", DOMAIN, f"{NETWORK_ID}-unit-{VERTICAL_LIGHT_UUID}-cover"
         )
         is None
     )
@@ -133,3 +127,6 @@ async def test_scene_activation(
         blocking=True,
     )
     mock_casambi.switchToScene.assert_awaited_once()
+    scene, level = mock_casambi.switchToScene.await_args.args
+    assert scene.sceneId == 1
+    assert level == 0xFF

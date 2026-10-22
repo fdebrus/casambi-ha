@@ -2,6 +2,8 @@
 
 from unittest.mock import MagicMock, patch
 
+from bleak.backends.device import BLEDevice
+from bleak.backends.scanner import AdvertisementData
 from CasambiBt.errors import AuthenticationError, NetworkNotFoundError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -14,7 +16,13 @@ from custom_components.casambi_bt.const import (
     CONF_WIND_THRESHOLD,
     DOMAIN,
 )
-from homeassistant.config_entries import SOURCE_REAUTH, SOURCE_RECONFIGURE, SOURCE_USER
+from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
+from homeassistant.config_entries import (
+    SOURCE_BLUETOOTH,
+    SOURCE_REAUTH,
+    SOURCE_RECONFIGURE,
+    SOURCE_USER,
+)
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -34,6 +42,78 @@ async def _start_network_flow(hass: HomeAssistant) -> dict:
     return await hass.config_entries.flow.async_init(
         DOMAIN, context={"source": SOURCE_USER}
     )
+
+
+def _discovery(connectable: bool = True) -> BluetoothServiceInfoBleak:
+    """Return a discovery of the test network as the bluetooth component sends it."""
+    device = BLEDevice(NETWORK_ADDRESS, NETWORK_NAME, {})
+    advertisement = AdvertisementData(
+        local_name=NETWORK_NAME,
+        manufacturer_data={},
+        service_data={},
+        service_uuids=[],
+        tx_power=-127,
+        rssi=-60,
+        platform_data=(),
+    )
+    return BluetoothServiceInfoBleak.from_scan(
+        "local", device, advertisement, 0.0, connectable
+    )
+
+
+async def test_bluetooth_discovery(
+    hass: HomeAssistant, mock_casambi: MagicMock, mock_bluetooth: MagicMock
+) -> None:
+    """Test that a discovered network is offered with its address filled in."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_BLUETOOTH}, data=_discovery()
+    )
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "network"
+
+    # Confirming opens the form, with the discovered address suggested.
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["type"] is FlowResultType.FORM
+    suggested = {
+        key.schema: key.description["suggested_value"]
+        for key in result["data_schema"].schema
+        if key.description
+    }
+    assert suggested[CONF_ADDRESS] == NETWORK_ADDRESS
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], USER_INPUT
+    )
+    await hass.async_block_till_done()
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["title"] == NETWORK_NAME
+    assert result["result"].unique_id == NETWORK_ADDRESS
+
+
+async def test_bluetooth_discovery_not_connectable(
+    hass: HomeAssistant, mock_casambi: MagicMock, mock_bluetooth: MagicMock
+) -> None:
+    """Test that a network seen by a scanner that can't connect is skipped."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_BLUETOOTH}, data=_discovery(connectable=False)
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "not_supported"
+
+
+async def test_bluetooth_discovery_already_configured(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a configured network is not offered again."""
+    mock_config_entry.add_to_hass(hass)
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": SOURCE_BLUETOOTH}, data=_discovery()
+    )
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
 
 
 async def test_user_flow_success(

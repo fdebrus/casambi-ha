@@ -40,7 +40,9 @@ The rest of this page documents the fork for my own reference.
 ## Installation
 
 1. Add this repository as a custom repository in HACS, download it and restart HA.
-2. Accept the discovered **Casambi Bluetooth** entry (or add it under *Settings → Devices & services*) and type the network password.
+2. Accept the discovered **Casambi Bluetooth** entry (or add it under *Settings → Devices & services*) and type the network password. The form also asks whether to import groups and whether to show vertical controls as covers; both can be changed later in the options.
+
+To remove it, delete the entry under *Settings → Devices & services* (its devices and entities go with it) and uninstall the repository in HACS. The network cache under `.storage/casambi_bt` can be deleted by hand.
 
 ## Options
 
@@ -95,7 +97,7 @@ Each louvre has a set of switches and dials; together they work in this order �
 
 ## Wall buttons
 
-Each press creates or updates the button's `event` entity (`press`, `release`, `hold`, `release_after_hold`) and fires a `casambi_bt_button_event` bus event:
+Each press creates or updates the button's `event` entity (`press`, `release`, `hold`, `release_after_hold`; anything else the library reports becomes `unknown`) and fires a `casambi_bt_button_event` bus event:
 
 ```yaml
 triggers:

@@ -17,12 +17,15 @@ from CasambiBt import (
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.casambi_bt import CasambiApi
 from custom_components.casambi_bt.const import (
     CONF_IMPORT_GROUPS,
     CONF_VERTICAL_AS_COVER,
     DOMAIN,
 )
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntry, DeviceRegistry
 
 NETWORK_ADDRESS = "AA:BB:CC:DD:EE:FF"
@@ -30,7 +33,7 @@ NETWORK_ID = "abcdef123456"
 NETWORK_NAME = "Test Network"
 
 LIGHT_UUID = "unit-light-uuid"
-LOUVRE_UUID = "unit-louvre-uuid"
+VERTICAL_LIGHT_UUID = "unit-vertical-light-uuid"
 WINSOL_LOUVRE_UUID = "unit-winsol-louvre-uuid"
 WINSOL_STAR_LOUVRE_UUID = "unit-winsol-star-louvre-uuid"
 WINSOL_SCREEN_UUID = "unit-winsol-screen-uuid"
@@ -107,14 +110,14 @@ def make_light_unit() -> Unit:
     )
 
 
-def make_louvre_unit() -> Unit:
+def make_vertical_light_unit() -> Unit:
     """Create a louvre unit with a vertical control."""
     state = UnitState()
     state.vertical = 128
     return _make_unit(
         2,
         2,
-        LOUVRE_UUID,
+        VERTICAL_LIGHT_UUID,
         "Test Louvre",
         [UnitControl(UnitControlType.VERTICAL, 0, 8, 0, False)],
         state,
@@ -281,17 +284,8 @@ def make_sensor_platform_unit() -> Unit:
 @pytest.fixture
 def mock_casambi() -> Generator[MagicMock]:
     """Mock the Casambi library for the integration and the config flow."""
+    # The spec makes every coroutine method of the library an AsyncMock.
     casa = MagicMock(spec=Casambi)
-    casa.connect = AsyncMock()
-    casa.disconnect = AsyncMock()
-    casa.invalidateCache = AsyncMock()
-    casa.setLevel = AsyncMock()
-    casa.setVertical = AsyncMock()
-    casa.setUnitState = AsyncMock()
-    casa.setColor = AsyncMock()
-    casa.setWhite = AsyncMock()
-    casa.turnOn = AsyncMock()
-    casa.switchToScene = AsyncMock()
     casa.connected = True
 
     async def _reconnect(_device: object) -> None:
@@ -301,12 +295,8 @@ def mock_casambi() -> Generator[MagicMock]:
     casa.networkId = NETWORK_ID
     casa.networkName = NETWORK_NAME
 
-    casa.setControlValue = AsyncMock()
-    casa.setSlider = AsyncMock()
-    casa.turnOff = AsyncMock()
-
     light = make_light_unit()
-    louvre = make_louvre_unit()
+    louvre = make_vertical_light_unit()
     casa.units = [
         light,
         louvre,
@@ -362,6 +352,26 @@ def mock_bluetooth() -> Generator[MagicMock]:
         ),
     ):
         yield device
+
+
+async def setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> CasambiApi:
+    """Add the entry to hass, set it up and return its api."""
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return cast("CasambiApi", entry.runtime_data)
+
+
+def entity_id_for(hass: HomeAssistant, domain: str, unique_id: str) -> str:
+    """Return the entity id registered for a unique id."""
+    entity_id = er.async_get(hass).async_get_entity_id(domain, DOMAIN, unique_id)
+    assert entity_id is not None, f"missing entity for {unique_id}"
+    return entity_id
+
+
+def unit_by_uuid(mock_casambi: MagicMock, uuid: str) -> Unit:
+    """Return the mocked unit with the given uuid."""
+    return next(u for u in mock_casambi.units if u.uuid == uuid)
 
 
 @pytest.fixture

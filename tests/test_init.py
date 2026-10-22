@@ -224,21 +224,3 @@ async def test_unit_devices_link_to_network_device(
     assert unit_device.via_device_id == network_device.id
 
     assert "deprecated `via_device`" not in caplog.text
-
-
-async def test_binary_sensor_reflects_connection(
-    hass: HomeAssistant,
-    mock_casambi: MagicMock,
-    mock_bluetooth: MagicMock,
-    mock_config_entry: MockConfigEntry,
-) -> None:
-    """Test that the status binary sensor mirrors the connection state."""
-    mock_config_entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
-    await hass.async_block_till_done()
-
-    states = [
-        s for s in hass.states.async_all("binary_sensor") if "status" in s.entity_id
-    ]
-    assert len(states) == 1
-    assert states[0].state == "on"

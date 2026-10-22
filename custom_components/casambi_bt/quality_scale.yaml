@@ -19,7 +19,11 @@ rules:
       Ships the official Casambi brand images locally in the brand/ folder
       (supported since HA 2026.3, which also stopped accepting custom
       integrations in the home-assistant/brands repo).
-  common-modules: done
+  common-modules:
+    status: done
+    comment: |
+      The entity bases live in entities.py; there is no coordinator (see
+      appropriate-polling).
   config-flow: done
   config-flow-test-coverage: done
   dependency-transparency: done
