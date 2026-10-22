@@ -1,3 +1,6 @@
 # Newest core the suite runs on: Home Assistant 2026.10.1, Python 3.14.
 pytest-homeassistant-custom-component==0.13.372
 -r requirements_test_common.txt
+
+# The usb component of this core imports serialx instead of pyserial.
+serialx
