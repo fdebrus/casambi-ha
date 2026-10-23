@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABCMeta, abstractmethod
 from collections.abc import Callable, Coroutine
 from datetime import timedelta
+import logging
 import math
 from time import monotonic
 from typing import Any, Final
@@ -38,6 +39,8 @@ from .entities import (
     TypedEntityDescription,
 )
 from .sensor import decode_louvre_channel
+
+_LOGGER = logging.getLogger(__name__)
 
 # State is pushed by the Casambi network, no coordinated polling is required.
 PARALLEL_UPDATES = 0
@@ -254,6 +257,60 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
     def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
         """Return the command moving the unit to a raw position."""
 
+    async def async_added_to_hass(self) -> None:
+        """Tell the weather protection how to see whether the motor rests."""
+        await super().async_added_to_hass()
+        self._api.register_rest_check(self._obj, self._at_rest)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Withdraw the rest check."""
+        self._api.unregister_rest_check(self._obj)
+        await super().async_will_remove_from_hass()
+
+    def _at_rest(self) -> bool:
+        """Return True while the motor is not on a button-style run."""
+        return not self._toggle_running()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """Show whether, and why, the weather protection holds the motor."""
+        reason = self._api.weather_lock(self._obj)
+        return {
+            "weather_lock": reason,
+            "weather_lock_value": self._api.wind_kmh if reason == "wind" else None,
+        }
+
+    def _check_weather_lock(self, raw_target: int | None) -> None:
+        """Refuse to move the motor out of safety while the weather holds it.
+
+        Raw 0 is the safe position of both motors (louvres closed, screen
+        retracted), so a target above the current raw position is refused;
+        anything towards safety, and stop, stay possible. Like the frost
+        lock this only binds Home Assistant: the wall button and the app
+        still work, and the weather protection sends the motor back.
+        """
+        reason = self._api.weather_lock(self._obj)
+        if reason is None:
+            return
+        current = self._raw_position(self._obj)
+        if raw_target is not None and current is not None and raw_target <= current:
+            return
+        wind = self._api.wind_kmh
+        _LOGGER.info(
+            "Weather protection: refused to move %s (%s%s)",
+            self._obj.name,
+            reason,
+            f", {wind:g} km/h" if wind is not None else "",
+        )
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key=f"weather_lock_{reason}",
+            translation_placeholders={
+                "name": self._obj.name,
+                "wind": f"{wind:g}" if wind is not None else "?",
+            },
+        )
+
     def _commanded_recently(self) -> bool:
         """Return True while the motor may still echo a bit written by HA."""
         return (
@@ -374,10 +431,12 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover, like the wall button where possible."""
+        self._check_weather_lock(self._raw_open)
         await self._drive_to_end(self._raw_open)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover, like the wall button where possible."""
+        self._check_weather_lock(self._raw_closed)
         await self._drive_to_end(self._raw_closed)
 
     def _toggle_running(self, unit: Unit | None = None) -> bool:
@@ -451,7 +510,7 @@ class CasambiLouvreCover(CasambiMotorCover):
             )
 
     async def async_open_cover(self, **kwargs: Any) -> None:
-        """Open the louvres unless the frost lock holds them."""
+        """Open the louvres unless the frost lock or the weather holds them."""
         self._check_frost_lock()
         await super().async_open_cover(**kwargs)
 
@@ -461,6 +520,7 @@ class CasambiLouvreCover(CasambiMotorCover):
         current = self._raw_position(self._obj)
         if current is None or target > current:
             self._check_frost_lock()
+        self._check_weather_lock(target)
         await self._async_casa_command(self._api.casa.setSlider(self._obj, target))
 
 
@@ -633,6 +693,10 @@ class CasambiScreenCover(CasambiMotorCover):
     def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
         return self._api.casa.setLevel(self._obj, raw)
 
+    def _at_rest(self) -> bool:
+        """Return True while neither the bit nor the estimate has it moving."""
+        return super()._at_rest() and not self._moving()
+
     def _note_direction(self, unit: Unit) -> None:
         """Keep the rest position from the motion estimate.
 
@@ -776,9 +840,6 @@ class CasambiScreenCover(CasambiMotorCover):
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the screen to a specific position (0-100)."""
-        position = kwargs[ATTR_POSITION]
-        await self._async_casa_command(
-            self._api.casa.setLevel(
-                self._obj, round((100 - position) * CASA_RAW_MAX / 100)
-            )
-        )
+        raw = round((100 - kwargs[ATTR_POSITION]) * CASA_RAW_MAX / 100)
+        self._check_weather_lock(raw)
+        await self._async_casa_command(self._api.casa.setLevel(self._obj, raw))

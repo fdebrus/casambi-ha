@@ -88,10 +88,12 @@ Each louvre has a set of switches and dials; together they work in this order �
 
 **🌡️ Temperature control** — while tracking runs, each °C above the **Temperature setpoint** (15–30 °C) tilts the slats 10° toward shade, each °C below 10° toward sun.
 
-**🌧️💨 Weather protection** — a network switch, present when there is a louvre or screen to protect and a Sensor Platform or a rain/wind sensor is configured.
+**🌧️💨 Weather protection** — a network switch, present when there is a louvre or screen to protect and a Sensor Platform or a rain/wind sensor is configured. While it holds, it is a lock like the frost lock, not a one-off command.
 - **Rain** closes the louvres and pauses tracking until it is dry.
 - **Wind** at the threshold retracts the screens, closes the louvres (the position the roof is rated for: Winsol SO! wind class 3, 6 Beaufort) and pauses tracking until it drops below 80 % of the threshold. Screens are never lowered again automatically.
-- It acts once when rain or wind starts. A command that fails (the link was down during a gust) is sent again on the next reading and as soon as the pergola is reachable. Unavailable sensors keep their last reading.
+- **Locked while it holds.** Home Assistant refuses to open the louvres (rain or wind) or to extend a screen (wind), from the dashboard, Siri/HomeKit or an automation, with an error saying why. Closing, retracting and stopping still work. The cover shows `weather_lock` (`wind`, `rain` or empty) and `weather_lock_value` (the wind in km/h) as attributes.
+- **Sent back when moved elsewhere.** The wall button and the Casambi app are not blocked, but a louvre or screen they moved out of safety is closed or retracted again as soon as it has stopped, at most once every 30 s per motor.
+- A command that fails (the link was down during a gust) is sent again on the next reading and as soon as the pergola is reachable. Unavailable sensors keep their last reading. Turning the switch off releases everything at once.
 
 **🧊 Frost lock** — on by default. Below the frost lock temperature, Home Assistant refuses to open the louvres (from the dashboard, Siri/HomeKit or an automation) with an error saying why, and tracking pauses. Closing and stopping still work. The wall button and the Casambi app are not affected. Watch the **Overcurrent events** sensor: it counts the motor forcing on stuck slats.
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
+from time import monotonic
 from typing import Any, Final
 
 from CasambiBt import Unit, UnitControl, UnitControlType
@@ -55,6 +56,7 @@ from .const import (
     DEFAULT_LOUVRE_AZIMUTH,
     DEFAULT_TEMP_SETPOINT,
     DEFAULT_WIND_THRESHOLD,
+    WEATHER_RESECURE_INTERVAL,
     entry_option,
 )
 from .entities import (
@@ -533,6 +535,9 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         # reading, so a failure that surfaces at once is not sent twice.
         self._pending: dict[str, tuple[Unit, bool, int]] = {}
         self._reading = 0
+        # When each motor was last sent to safety, to leave one that was
+        # just moved alone until it has stopped and reported its position.
+        self._secured_at: dict[str, float] = {}
 
     async def async_added_to_hass(self) -> None:
         """Restore the setting and start listening to the weather sources."""
@@ -540,6 +545,8 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         await self._async_restore_is_on()
         for unit in self._sensor_platforms:
             self._api.register_unit_updates(unit, self._sensor_update)
+        for unit in (*self._louvres, *self._screens):
+            self._api.register_unit_updates(unit, self._motor_update)
         if self._rain_entity:
             self.async_on_remove(
                 async_track_state_change_event(
@@ -556,9 +563,11 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
             self._wind_entity_update(self.hass.states.get(self._wind_entity))
 
     async def async_will_remove_from_hass(self) -> None:
-        """Stop listening to sensor platform updates."""
+        """Stop listening to sensor platform and motor updates."""
         for unit in self._sensor_platforms:
             self._api.unregister_unit_updates(unit, self._sensor_update)
+        for unit in (*self._louvres, *self._screens):
+            self._api.unregister_unit_updates(unit, self._motor_update)
         await super().async_will_remove_from_hass()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -582,7 +591,44 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         self._platform_wind = None
         self._entity_wind = None
         self._pending.clear()
+        self._secured_at.clear()
         self.async_write_ha_state()
+        self._api.notify_weather_lock()
+
+    @callback
+    def _motor_update(self, unit: Unit) -> None:
+        """Send a louvre or screen back to safety when it was moved elsewhere.
+
+        The wall button and the Casambi app bypass Home Assistant's lock.
+        A motor the lock holds that rests out of its safe position (raw 0:
+        louvres closed, screen retracted) is sent back, once it has stopped
+        and not within WEATHER_RESECURE_INTERVAL of the last command to it.
+        A screen ignores a position behind it while it moves, so waiting
+        for the rest is what makes the command take.
+        """
+        reason = self._api.weather_lock(unit)
+        if reason is None or not self._api.available or unit.uuid in self._pending:
+            return
+        if not self._api.unit_at_rest(unit):
+            return
+        retract = classify_unit(unit) is UnitKind.SCREEN
+        state = unit.state
+        raw = (state.dimmer if retract else state.slider) if state else None
+        if not raw:
+            return
+        last = self._secured_at.get(unit.uuid)
+        if last is not None and monotonic() - last < WEATHER_RESECURE_INTERVAL:
+            return
+        _LOGGER.info(
+            "Weather protection: %s was moved to %i while held by %s, %s it again",
+            unit.name,
+            raw,
+            f"wind ({self._api.wind_kmh:g} km/h)"
+            if reason == "wind" and self._api.wind_kmh is not None
+            else reason,
+            "retracting" if retract else "closing",
+        )
+        self._secure(unit, retract)
 
     @callback
     def _connection_callback(self) -> None:
@@ -594,6 +640,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
     def _secure(self, unit: Unit, retract: bool) -> None:
         """Retract a screen or close a louvre in the background."""
         self._pending.pop(unit.uuid, None)
+        self._secured_at[unit.uuid] = monotonic()
         # Owned by the entry, so an unload cancels it.
         self._config_entry.async_create_task(
             self.hass, self._async_secure(unit, retract)
@@ -665,6 +712,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         if not readings:
             return
         wind_kmh = max(readings)
+        self._api.wind_kmh = wind_kmh
         threshold = entry_option(
             self._config_entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
         )
@@ -679,9 +727,11 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
                 self._secure(screen, retract=True)
             for louvre in self._louvres:
                 self._secure(louvre, retract=False)
+            self._api.notify_weather_lock()
         elif wind_kmh < threshold * WIND_HYSTERESIS and self._api.wind_active:
             self._api.wind_active = False
             _LOGGER.info("Weather protection: wind dropped to %.1f km/h", wind_kmh)
+            self._api.notify_weather_lock()
 
     @callback
     def _rain_entity_changed(self, event: Event[EventStateChangedData]) -> None:
@@ -708,9 +758,11 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
             _LOGGER.info("Weather protection: rain detected, closing louvres")
             for louvre in self._louvres:
                 self._secure(louvre, retract=False)
+            self._api.notify_weather_lock()
         elif not raining and self._api.rain_active:
             self._api.rain_active = False
             _LOGGER.info("Weather protection: rain stopped")
+            self._api.notify_weather_lock()
 
     @callback
     def _sensor_update(self, unit: Unit) -> None:

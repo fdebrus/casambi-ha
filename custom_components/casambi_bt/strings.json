@@ -149,6 +149,12 @@
     },
     "frost_lock": {
       "message": "The louvres are locked against frost: it is {temperature} °C, so they may be frozen to their seals. You can still close or stop them, or turn off the frost lock."
+    },
+    "weather_lock_wind": {
+      "message": "{name} is held by the weather protection: the wind is at {wind} km/h, so it stays secured. You can still close the louvres, retract the screen or stop, or turn off the weather protection."
+    },
+    "weather_lock_rain": {
+      "message": "{name} is held by the weather protection: it is raining, so the louvres stay closed. You can still close or stop them, or turn off the weather protection."
     }
   },
   "issues": {

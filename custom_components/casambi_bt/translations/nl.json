@@ -149,6 +149,12 @@
         },
         "frost_lock": {
             "message": "De lamellen zijn vergrendeld tegen vorst: het is {temperature} °C, ze kunnen aan hun dichtingen vastgevroren zijn. Sluiten of stoppen kan nog steeds, of schakel de vorstvergrendeling uit."
+        },
+        "weather_lock_wind": {
+            "message": "{name} wordt vastgehouden door de weerbeveiliging: de wind staat op {wind} km/u, dus blijft de pergola beveiligd. Lamellen sluiten, het scherm oprollen of stoppen kan nog steeds, of schakel de weerbeveiliging uit."
+        },
+        "weather_lock_rain": {
+            "message": "{name} wordt vastgehouden door de weerbeveiliging: het regent, dus blijven de lamellen gesloten. Sluiten of stoppen kan nog steeds, of schakel de weerbeveiliging uit."
         }
     },
     "issues": {
