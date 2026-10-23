@@ -466,9 +466,25 @@ reading); wind at or above the configured threshold
 tracking, latched with 80% hysteresis; screens are never re-extended
 automatically. Wind is the higher of the sensor platform (packet 1 / 4)
 and the wind entity (`entity_wind_kmh`, converted from its unit with
-`SpeedConverter`; no unit means km/h). It acts on the transitions, once
-when rain or wind starts: reopening the roof during the rain is not undone.
-A protective command that fails (`HomeAssistantError` from the proxy) is
+`SpeedConverter`; no unit means km/h). It acts on the transitions when
+rain or wind starts, and then holds as a lock until they stop, exactly
+like the frost lock: `CasambiApi.weather_lock(unit)` returns `"wind"`
+(louvres and screens) or `"rain"` (louvres only) while the latch is set,
+and `CasambiMotorCover._check_weather_lock(raw_target)` raises
+`ServiceValidationError` (`weather_lock_wind` / `weather_lock_rain`) on
+open, close and set-position commands that would move the motor above its
+current raw position (raw 0 is the safe end of both motors: louvres
+closed, screen retracted). The covers expose the lock as the
+`weather_lock` and `weather_lock_value` attributes and are refreshed by
+`notify_weather_lock()` whenever a latch changes. The wall button and the
+app are not blocked; instead the switch listens to the motors' state
+pushes (`_motor_update`) and sends a motor that rests out of safety back,
+no more than once per `WEATHER_RESECURE_INTERVAL` (30 s) per motor. "At
+rest" comes from the cover through `CasambiApi.register_rest_check`: the
+bit is clear and, for a screen, its motion estimate has ended, because a
+screen ignores a position behind it while it moves (capture, below).
+Turning the switch off clears both latches and releases everything. A
+protective command that fails (`HomeAssistantError` from the proxy) is
 kept in `_pending` with the reading it failed on, and sent again on a
 later reading or when the connection comes back, as long as the rain or
 wind it answers to is still active.

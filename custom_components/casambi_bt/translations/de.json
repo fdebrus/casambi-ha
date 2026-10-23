@@ -149,6 +149,12 @@
         },
         "frost_lock": {
             "message": "Die Lamellen sind gegen Frost gesperrt: Es hat {temperature} °C, sie könnten an den Dichtungen festgefroren sein. Schließen oder Anhalten ist weiterhin möglich, oder schalte die Frostsperre aus."
+        },
+        "weather_lock_wind": {
+            "message": "{name} wird vom Wetterschutz festgehalten: Der Wind liegt bei {wind} km/h, daher bleibt die Pergola gesichert. Lamellen schließen, Screen einfahren oder Anhalten ist weiterhin möglich, oder schalte den Wetterschutz aus."
+        },
+        "weather_lock_rain": {
+            "message": "{name} wird vom Wetterschutz festgehalten: Es regnet, daher bleiben die Lamellen geschlossen. Schließen oder Anhalten ist weiterhin möglich, oder schalte den Wetterschutz aus."
         }
     },
     "issues": {

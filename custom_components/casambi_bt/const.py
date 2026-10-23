@@ -34,6 +34,12 @@ DEFAULT_FROST_LOCK_TEMPERATURE: Final = 2.0
 # Setpoint (°C) of the temperature control until the dial is moved.
 DEFAULT_TEMP_SETPOINT: Final = 22.0
 
+# Weather protection: a louvre or screen moved out of its safe position
+# (by the wall button or the app) while the lock holds is sent back, but
+# not twice within this many seconds, so a motor that just stopped and has
+# not reported its position yet is not fought.
+WEATHER_RESECURE_INTERVAL: Final = 30.0
+
 # Full scale of the 8-bit raw values the library exchanges with the units.
 CASA_RAW_MAX: Final = 255
 

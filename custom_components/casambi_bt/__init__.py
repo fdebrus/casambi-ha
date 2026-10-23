@@ -215,7 +215,13 @@ class CasambiApi:
         self.temp_setpoints: dict[str, float] = {}
         self.rain_active = False
         self.wind_active = False
+        # Last wind reading (km/h) the weather protection acted on.
+        self.wind_kmh: float | None = None
         self.frost_lock: dict[str, bool] = {}
+        # How to tell whether a motor is at rest, registered by its cover:
+        # the weather protection only sends a moved motor back once it has
+        # stopped, and a screen's motion is only known from its estimate.
+        self._rest_checks: dict[str, Callable[[], bool]] = {}
         # Last numeric reading of the temperature source, for the frost lock.
         self.last_temperature: float | None = None
         # Registry id of the network device, set once it has been created so
@@ -398,6 +404,48 @@ class CasambiApi:
     def available(self) -> bool:
         """Return True if the controller is available."""
         return self._link_up and self._casa.connected
+
+    def weather_lock(self, unit: Unit) -> str | None:
+        """Return why the weather protection holds a motor, or None.
+
+        Wind holds the louvres and the screens, rain only the louvres;
+        wind wins when both apply. The flags are cleared the moment the
+        weather protection switch is turned off, so an off switch never
+        locks anything.
+        """
+        kind = classify_unit(unit)
+        if kind is UnitKind.LOUVRE:
+            if self.wind_active:
+                return "wind"
+            if self.rain_active:
+                return "rain"
+        elif kind is UnitKind.SCREEN and self.wind_active:
+            return "wind"
+        return None
+
+    def register_rest_check(self, unit: Unit, check: Callable[[], bool]) -> None:
+        """Register how to tell whether a motor is at rest."""
+        self._rest_checks[unit.uuid] = check
+
+    def unregister_rest_check(self, unit: Unit) -> None:
+        """Forget a motor's rest check."""
+        self._rest_checks.pop(unit.uuid, None)
+
+    def unit_at_rest(self, unit: Unit) -> bool:
+        """Return True unless the unit's cover reports it moving."""
+        check = self._rest_checks.get(unit.uuid)
+        return check is None or check()
+
+    @callback
+    def notify_weather_lock(self) -> None:
+        """Run the motors' unit callbacks so that the covers show the lock.
+
+        The lock changes with the weather, not with a pushed state; this
+        refreshes the covers at once instead of at the motor's next push.
+        """
+        for unit in self.get_units():
+            if classify_unit(unit) in (UnitKind.LOUVRE, UnitKind.SCREEN):
+                self._unit_changed_handler(unit)
 
     def frost_lock_temperature(self, unit: Unit) -> float | None:
         """Return the temperature that locks a louvre against frost, or None.
