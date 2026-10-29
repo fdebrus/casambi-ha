@@ -21,7 +21,7 @@ from custom_components.casambi_bt.const import (
     RECONNECT_BACKOFF_STEP,
 )
 from homeassistant.components.light import DOMAIN as LIGHT_DOMAIN, SERVICE_TURN_OFF
-from homeassistant.const import ATTR_ENTITY_ID
+from homeassistant.const import ATTR_ENTITY_ID, EVENT_HOMEASSISTANT_STOP
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
@@ -48,6 +48,20 @@ def _outcomes(mock_casambi: MagicMock, *outcomes: type[Exception] | None):
     return _reconnect
 
 
+async def _reconnect_done(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    """Wait for the reconnect task to finish.
+
+    It is a background task, which block_till_done doesn't wait for, and
+    its backoff wait hands the loop over between attempts.
+    """
+    await hass.async_block_till_done()
+    task = entry.runtime_data._reconnect_task  # noqa: SLF001
+    if task is not None:
+        async with asyncio.timeout(5):
+            await task
+    await hass.async_block_till_done()
+
+
 def _backoffs(sleep: AsyncMock) -> list[float]:
     """Return the reconnect delays, ignoring Home Assistant's own sleep(0)."""
     return [c.args[0] for c in sleep.await_args_list if c.args[0]]
@@ -72,7 +86,7 @@ async def test_reconnect_retries_until_success(
         "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
     ) as sleep:
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     assert mock_casambi.reconnect.await_count == 3
     # The delay doubles after every failed attempt.
@@ -101,7 +115,7 @@ async def test_reconnect_backoff_is_capped(
         "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
     ) as sleep:
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     delays = _backoffs(sleep)
     assert max(delays) == RECONNECT_BACKOFF_MAX
@@ -130,7 +144,7 @@ async def test_reconnect_waits_longer_without_device(
         ),
     ):
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     assert _backoffs(sleep) == [RECONNECT_BACKOFF_NO_DEVICE]
     mock_casambi.reconnect.assert_awaited_once()
@@ -159,7 +173,7 @@ async def test_reconnect_keeps_retrying_protocol_errors(
         "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
     ) as sleep:
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     assert mock_casambi.reconnect.await_count == 4
     # The first protocol error is retried quickly, the next ones at the
@@ -194,7 +208,7 @@ async def test_reconnect_retries_a_link_lost_during_the_handshake(
         "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
     ) as sleep:
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     assert mock_casambi.reconnect.await_count == 2
     assert _backoffs(sleep) == [RECONNECT_BACKOFF_START]
@@ -225,7 +239,7 @@ async def test_reconnect_keeps_trying_after_an_unexpected_error(
         "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
     ) as sleep:
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     assert mock_casambi.reconnect.await_count == 3
     assert _backoffs(sleep) == [RECONNECT_BACKOFF_MAX, RECONNECT_BACKOFF_MAX]
@@ -249,7 +263,7 @@ async def test_reconnect_auth_failure_starts_reauth(
 
     with patch("custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock):
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     mock_casambi.reconnect.assert_awaited_once()
     flows = [
@@ -563,7 +577,7 @@ async def test_long_outage_is_logged(
         ),
     ):
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     assert (
         "has been unreachable for 6 minutes (no Bluetooth adapter or proxy in "
@@ -630,7 +644,7 @@ async def test_reconnect_without_connection_is_retried(
         "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
     ) as sleep:
         disconnect()
-        await hass.async_block_till_done()
+        await _reconnect_done(hass, mock_config_entry)
 
     assert attempts == 2
     assert _backoffs(sleep) == [RECONNECT_BACKOFF_START]
@@ -689,3 +703,181 @@ async def test_no_reconnect_once_disconnecting(
 
     mock_casambi.reconnect.assert_not_awaited()
     assert api._reconnect_task is None  # noqa: SLF001
+
+
+async def test_write_timeout_through_a_proxy_takes_the_entities_down(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a bare TimeoutError from a write the link died in.
+
+    bleak-esphome reports a GATT timeout through a Bluetooth proxy as a
+    TimeoutError, which the library lets through; the status stayed on.
+    """
+    await _setup(hass, mock_config_entry)
+    status = next(
+        s.entity_id
+        for s in hass.states.async_all("binary_sensor")
+        if "status" in s.entity_id
+    )
+    light = er.async_get(hass).async_get_entity_id(
+        LIGHT_DOMAIN, DOMAIN, f"{NETWORK_ID}-unit-{LIGHT_UUID}-light"
+    )
+    assert light is not None
+
+    async def _failing_write(*_args: object) -> None:
+        mock_casambi.connected = False
+        raise TimeoutError
+
+    mock_casambi.setLevel.side_effect = _failing_write
+    started = asyncio.Event()
+
+    async def _hang(_device: object) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    mock_casambi.reconnect.side_effect = _hang
+
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(
+            LIGHT_DOMAIN, SERVICE_TURN_OFF, {ATTR_ENTITY_ID: light}, blocking=True
+        )
+    async with asyncio.timeout(5):
+        await started.wait()
+    assert hass.states.get(status).state == "off"
+
+
+async def test_reconnect_retries_a_proxy_timeout(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a proxy timeout is retried quickly like a bluetooth error."""
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    mock_casambi.connected = False
+    mock_casambi.reconnect.side_effect = _outcomes(mock_casambi, TimeoutError, None)
+
+    with patch(
+        "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
+    ) as sleep:
+        disconnect()
+        await _reconnect_done(hass, mock_config_entry)
+
+    assert _backoffs(sleep) == [RECONNECT_BACKOFF_START]
+    assert mock_config_entry.runtime_data.available
+
+
+async def _wait_for_the_backoff(sleeping: asyncio.Event) -> None:
+    async with asyncio.timeout(5):
+        await sleeping.wait()
+
+
+@pytest.mark.parametrize(
+    ("first_failure", "woken"),
+    [
+        # Nothing in range: the network's first advertisement ends the wait.
+        ("no device", True),
+        # Seen but refusing: the backoff stands.
+        ("refused", False),
+    ],
+)
+async def test_an_advertisement_ends_the_reconnect_wait(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    first_failure: str,
+    woken: bool,
+) -> None:
+    """Test that the network coming back is acted on at once.
+
+    Home Assistant passes on only the first advertisement after the device
+    returns; the reconnect task, sleeping up to five minutes, used to miss
+    it because the callback found the task running and did nothing.
+    """
+    api = await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    mock_casambi.connected = False
+    sleeping = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def _long_sleep(delay: float) -> None:
+        if not delay:
+            await real_sleep(0)
+            return
+        sleeping.set()
+        await asyncio.Event().wait()
+
+    devices = [None, mock_bluetooth] if first_failure == "no device" else None
+    if first_failure == "refused":
+        mock_casambi.reconnect.side_effect = _outcomes(mock_casambi, BluetoothError)
+
+    with (
+        patch("custom_components.casambi_bt.asyncio.sleep", side_effect=_long_sleep),
+        patch(
+            "homeassistant.components.bluetooth.async_ble_device_from_address",
+            side_effect=devices,
+            return_value=mock_bluetooth,
+        ),
+    ):
+        disconnect()
+        await _wait_for_the_backoff(sleeping)
+        mock_casambi.reconnect.side_effect = _outcomes(mock_casambi, None)
+        api._bluetooth_callback(MagicMock(), MagicMock())  # noqa: SLF001
+        for _ in range(10):
+            await real_sleep(0)
+
+        assert api.available is woken
+        if not woken:
+            await api.disconnect()
+
+
+async def test_no_reconnect_while_home_assistant_stops(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the proxies dropping their links at shutdown start nothing."""
+    api = await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+
+    hass.bus.async_fire(EVENT_HOMEASSISTANT_STOP)
+    await hass.async_block_till_done()
+    mock_casambi.connected = False
+    disconnect()
+    await hass.async_block_till_done()
+
+    mock_casambi.reconnect.assert_not_awaited()
+    assert api._reconnect_task is None  # noqa: SLF001
+
+
+async def test_an_entity_failing_on_the_drop_does_not_stop_the_reconnect(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a raising connection callback leaves the reconnect alone.
+
+    The library swallows what its disconnect callback raises, so an entity
+    failing there used to leave the network without a reconnect.
+    """
+    api = await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+
+    def _broken() -> None:
+        raise RuntimeError("entity bug")
+
+    api.register_connection_updates(_broken)
+    mock_casambi.connected = False
+    with patch("custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock):
+        disconnect()
+        await _reconnect_done(hass, mock_config_entry)
+
+    mock_casambi.reconnect.assert_awaited_once()
+    assert api.available

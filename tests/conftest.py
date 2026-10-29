@@ -1,6 +1,6 @@
 """Fixtures for the Casambi Bluetooth integration tests."""
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -276,10 +276,42 @@ def make_sensor_platform_unit() -> Unit:
         model="Sensor Platform V4",
         state_length=5,
     )
-    # Enable bits 34-37 set (byte 4 = 0b00111100), like the real defaults.
+    # Enable bits 34-37 set (byte 4 = 0b00111100), like the real defaults,
+    # and no reading yet.
     state._raw_state = bytes([0, 0, 0, 0, 0x3C])  # noqa: SLF001
-    unit._sensor_cache.update({0: 1, 1: 140, 2: 40, 3: 0})  # noqa: SLF001
     return unit
+
+
+# Sensor platform packets (see platform_packets) and the readings the
+# fixture reports right after connecting: dry, 35 km/h (the default wind
+# threshold), solar 10, no motion.
+PLATFORM_PACKETS = {"wind": 1, "solar": 2, "pir": 3, "rain": 4}
+PLATFORM_DEFAULTS = {"rain": 0, "wind": 35, "solar": 10, "pir": 0}
+
+
+def platform_packet(
+    packet: str, value: int, *, presence: int = 1, lux: int = 1234
+) -> bytes:
+    """Encode one sensor platform state as the fixture definition lays it out.
+
+    Presence bits 0-1, lux bits 2-13, packet header bits 14-17, value bits
+    18-33, the four enable bits 34-37 set.
+    """
+    packed = (
+        presence
+        | lux << 2
+        | PLATFORM_PACKETS[packet] << 14
+        | value << 18
+        | 0b1111 << 34
+    )
+    return packed.to_bytes(5, "little")
+
+
+def push_platform(handler: Callable[[Unit], None], unit: Unit, **readings: int) -> None:
+    """Push one state per reading, the way the platform reports them."""
+    for packet, value in readings.items():
+        unit.setStateFromBytes(platform_packet(packet, value))
+        handler(unit)
 
 
 async def apply_control_value(unit: Unit, control: UnitControl, value: int) -> None:
@@ -384,7 +416,17 @@ async def setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> CasambiApi
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    return cast("CasambiApi", entry.runtime_data)
+    api = cast("CasambiApi", entry.runtime_data)
+    # The sensor platform reports its readings right after connecting.
+    for unit in api.get_units():
+        if unit.uuid == SENSOR_PLATFORM_UUID:
+            push_platform(
+                api._unit_changed_handler,  # noqa: SLF001
+                unit,
+                **PLATFORM_DEFAULTS,
+            )
+    await hass.async_block_till_done()
+    return api
 
 
 def entity_id_for(hass: HomeAssistant, domain: str, unique_id: str) -> str:

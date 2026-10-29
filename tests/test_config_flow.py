@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
-from CasambiBt.errors import AuthenticationError, NetworkNotFoundError
+from CasambiBt.errors import AuthenticationError, BluetoothError, NetworkNotFoundError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -16,6 +16,7 @@ from custom_components.casambi_bt.const import (
     CONF_WIND_THRESHOLD,
     DOMAIN,
 )
+from homeassistant import config_entries
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.config_entries import (
     SOURCE_BLUETOOTH,
@@ -373,3 +374,81 @@ async def test_reconfigure_flow_wrong_network(
 
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "wrong_network"
+
+
+async def test_user_flow_on_a_configured_network_aborts_first(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that adding a configured network stops before connecting.
+
+    Validating first wiped the running entry's network cache and opened a
+    second link next to its own.
+    """
+    mock_config_entry.add_to_hass(hass)
+    result = await _start_network_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], USER_INPUT
+    )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "already_configured"
+    mock_casambi.connect.assert_not_awaited()
+    mock_casambi.invalidateCache.assert_not_awaited()
+
+
+async def test_user_flow_replaces_an_ignored_network(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+) -> None:
+    """Test adding a network whose discovery card was ignored.
+
+    The flow used to update the ignored entry and report success, leaving
+    nothing set up.
+    """
+    MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=NETWORK_ADDRESS,
+        source=config_entries.SOURCE_IGNORE,
+        data={},
+    ).add_to_hass(hass)
+    result = await _start_network_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], USER_INPUT
+    )
+
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    entries = hass.config_entries.async_entries(DOMAIN)
+    assert [e.source for e in entries] == [SOURCE_USER]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        BluetoothError("connect failed"),
+        TimeoutError,
+        AuthenticationError("Login failed: 503\nService Unavailable"),
+    ],
+)
+async def test_user_flow_connection_problems_are_not_a_bad_password(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    error: Exception | type[Exception],
+) -> None:
+    """Test that a radio or cloud failure reads as "can't connect".
+
+    It used to show "unknown" with a traceback, and a cloud outage at the
+    login "invalid password".
+    """
+    mock_casambi.connect.side_effect = error
+    result = await _start_network_flow(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], USER_INPUT
+    )
+
+    assert result["type"] is FlowResultType.FORM
+    assert result["errors"] == {"base": "cannot_connect"}

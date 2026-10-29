@@ -92,7 +92,7 @@ Each louvre has a set of switches and dials; together they work in this order �
 - **Rain** closes the louvres and pauses tracking until it is dry.
 - **Wind** at the threshold retracts the screens, closes the louvres (the position the roof is rated for: Winsol SO! wind class 3, 6 Beaufort) and pauses tracking until it drops below 80 % of the threshold. Screens are never lowered again automatically.
 - **Locked while it holds.** Home Assistant refuses to open the louvres (rain or wind) or to extend a screen (wind), from the dashboard, Siri/HomeKit or an automation, with an error saying why. Closing, retracting and stopping still work. The cover shows `weather_lock` (`wind`, `rain` or empty) and `weather_lock_value` (the wind in km/h) as attributes.
-- **Sent back when moved elsewhere.** The wall button and the Casambi app are not blocked, but a louvre or screen they moved out of safety is closed or retracted again as soon as it has stopped, at most once every 30 s per motor.
+- **Sent back when moved elsewhere.** The wall button and the Casambi app are not blocked, but a louvre or screen they moved out of safety is closed or retracted again as soon as it has stopped, at most once every 30 s per motor. One that keeps stopping short (an obstacle) is retried less and less often, up to every 16 minutes, with a warning in the log.
 - A command that fails (the link was down during a gust) is sent again on the next reading and as soon as the pergola is reachable. Unavailable sensors keep their last reading. Turning the switch off releases everything at once.
 
 **🧊 Frost lock** — on by default. Below the frost lock temperature, Home Assistant refuses to open the louvres (from the dashboard, Siri/HomeKit or an automation) with an error saying why, and tracking pauses. Closing and stopping still work. The wall button and the Casambi app are not affected. Watch the **Overcurrent events** sensor: it counts the motor forcing on stuck slats.
@@ -121,6 +121,8 @@ Wired button modules only report on the input stream; some release frames get lo
 
 - The integration reconnects on its own: retries start after 2 s and back off to 5 minutes (1 minute while no adapter sees the network). A changed password is only noticed at the next Home Assistant restart, which then asks for it again.
 - The **Status** sensor goes off the moment the link drops, and all unit entities go unavailable with it.
+- When the Casambi cloud has an incident at startup, the integration connects from its cached copy of the network instead of waiting for the cloud.
+- When the network reappears after an outage, the reconnect starts at once instead of waiting out the backoff.
 - After 5 minutes unreachable a warning in the log names the reason (e.g. *no Bluetooth adapter or proxy in range sees it*), and another one says when it is back. A Bluetooth proxy that went offline is the usual cause.
 - Reconnect detection listens to the network's advertisements with **passive** scanning. A local Linux adapter only supports that with BlueZ's experimental interfaces (`Experimental = true` under `[General]` in `/etc/bluetooth/main.conf`); otherwise HA falls back to active scanning.
 

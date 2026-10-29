@@ -6,6 +6,7 @@ from CasambiBt._constants import ConnectionState
 from CasambiBt.errors import (
     AuthenticationError,
     ConnectionStateError,
+    NetworkNotFoundError,
     NetworkUpdateError,
 )
 import httpx
@@ -261,3 +262,75 @@ async def test_unit_devices_link_to_network_device(
     assert unit_device.via_device_id == network_device.id
 
     assert "deprecated `via_device`" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        AuthenticationError("Login failed: 503\nService Unavailable"),
+        NetworkNotFoundError("Getting network id returned unexpected status 502"),
+        NetworkUpdateError("Could not update network!"),
+    ],
+)
+async def test_cloud_outage_connects_from_the_cache(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    error: Exception,
+) -> None:
+    """Test that a cloud incident at startup doesn't keep the pergola out.
+
+    The library only falls back to its cache when the cloud can't be
+    reached at all; a bad answer stopped the setup until the incident was
+    over, although the cached network was enough to connect.
+    """
+    mock_casambi.connect.side_effect = [error, None]
+
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.LOADED
+    assert mock_casambi.connect.await_args_list[1].kwargs == {"forceOffline": True}
+
+
+async def test_unknown_network_is_not_taken_from_the_cache(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the cloud saying it doesn't know the network is believed."""
+    mock_casambi.connect.side_effect = NetworkNotFoundError(
+        "API failed to find network. Is your network configured correctly?"
+    )
+
+    mock_config_entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY
+    mock_casambi.connect.assert_awaited_once()
+
+
+@pytest.mark.parametrize("error", [TimeoutError, RuntimeError("bleak backend")])
+async def test_setup_retries_a_proxy_timeout_and_unknown_errors(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    error: BaseException | type[BaseException],
+) -> None:
+    """Test that the BLE stack's surprises leave the entry retrying.
+
+    A proxy timeout used to fail the entry for good: Home Assistant does
+    not retry such an entry, and discovery only reloads retrying ones.
+    """
+    mock_casambi.connect.side_effect = error
+
+    mock_config_entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert mock_config_entry.state is ConfigEntryState.SETUP_RETRY

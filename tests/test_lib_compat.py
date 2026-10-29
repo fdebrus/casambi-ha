@@ -45,6 +45,7 @@ COROUTINE_METHODS = (
     "setVertical",
     "setSlider",
     "setColor",
+    "setColorXY",
     "setWhite",
     "setTemperature",
     "setUnitState",

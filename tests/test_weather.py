@@ -31,6 +31,7 @@ from .conftest import (
     WINSOL_LOUVRE_UUID,
     WINSOL_SCREEN_UUID,
     entity_id_for as _entity_id,
+    push_platform,
     setup_entry as _setup,
     unit_by_uuid,
 )
@@ -134,8 +135,7 @@ async def test_weather_protection_rain_and_wind(
     mock_casambi.setSlider.reset_mock()
 
     # Rain starts: louvres close and sun tracking is paused.
-    sensor_unit._sensor_cache[0] = 5  # noqa: SLF001
-    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, rain=1)  # noqa: SLF001
     await hass.async_block_till_done()
 
     mock_casambi.setSlider.assert_awaited_once()
@@ -146,8 +146,7 @@ async def test_weather_protection_rain_and_wind(
 
     # Rain stops: tracking is allowed again, nothing moves by itself.
     mock_casambi.setSlider.reset_mock()
-    sensor_unit._sensor_cache[0] = 1  # noqa: SLF001
-    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
     await hass.async_block_till_done()
 
     assert api.rain_active is False
@@ -159,10 +158,8 @@ async def test_weather_protection_rain_and_wind(
     mock_casambi.setLevel.assert_not_awaited()
 
     # Wind drops below hysteresis, then gusts again: retract fires again.
-    sensor_unit._sensor_cache[1] = 40  # noqa: SLF001  # 10 km/h
-    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
-    sensor_unit._sensor_cache[1] = 160  # noqa: SLF001  # 40 km/h
-    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, wind=10)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, wind=40)  # noqa: SLF001
     await hass.async_block_till_done()
     mock_casambi.setLevel.assert_awaited_once()
 
@@ -178,7 +175,7 @@ async def test_rain_pauses_sun_tracking(
     api = mock_config_entry.runtime_data
     sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
     # A calm day, so that only the rain holds the louvres.
-    sensor_unit._sensor_cache[1] = 40  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, wind=10)  # noqa: SLF001
 
     protection_id = _entity_id(
         hass, "switch", f"{mock_casambi.networkId}-weather-protection"
@@ -194,8 +191,7 @@ async def test_rain_pauses_sun_tracking(
     await hass.async_block_till_done()
     mock_casambi.setSlider.assert_not_awaited()
 
-    sensor_unit._sensor_cache[0] = 5  # noqa: SLF001
-    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, rain=1)  # noqa: SLF001
     await hass.async_block_till_done()
     mock_casambi.setSlider.assert_awaited_once()
     assert mock_casambi.setSlider.await_args.args[1] == 0
@@ -211,8 +207,7 @@ async def test_rain_pauses_sun_tracking(
         mock_casambi.setSlider.assert_not_awaited()
 
         # Dry again: tracking moves the louvres at its next update.
-        sensor_unit._sensor_cache[0] = 1  # noqa: SLF001
-        api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+        push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
         await hass.async_block_till_done()
         assert api.rain_active is False
         await hass.services.async_call(
@@ -238,8 +233,7 @@ async def test_weather_protection_off_does_nothing(
     api = mock_config_entry.runtime_data
     sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
 
-    sensor_unit._sensor_cache[0] = 5  # noqa: SLF001
-    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, rain=1)  # noqa: SLF001
     await hass.async_block_till_done()
 
     mock_casambi.setSlider.assert_not_awaited()
@@ -364,8 +358,7 @@ async def test_rain_entity_and_sensor_platform_combine(
     assert api.rain_active is True
 
     # The sensor platform reads dry: the rain entity still reports rain.
-    sensor_unit._sensor_cache[0] = 1  # noqa: SLF001
-    api._unit_changed_handler(sensor_unit)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
     await hass.async_block_till_done()
     assert api.rain_active is True
 
@@ -558,6 +551,38 @@ async def test_frost_lock_reads_the_system_unit(
     louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
     # 33.8 F is 1 C, below the 2 C default.
     assert api.frost_lock_temperature(louvre) == pytest.approx(1.0)
+
+
+async def test_frost_lock_keeps_the_last_reading_of_a_dropped_sensor(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a temperature source that went unavailable after a cold reading.
+
+    The last reading was only the one read at the last command: a sensor
+    that read -3 °C overnight and then dropped left the louvres unlocked.
+    """
+    hass.states.async_set(TEMP_SENSOR, "15")
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_TEMPERATURE_ENTITY: TEMP_SENSOR}
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set(TEMP_SENSOR, "-3")
+    hass.states.async_set(TEMP_SENSOR, "unavailable")
+    await hass.async_block_till_done()
+
+    cover_id = _entity_id(
+        hass, "cover", f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover"
+    )
+    with pytest.raises(ServiceValidationError) as err:
+        await hass.services.async_call(
+            "cover", "open_cover", {ATTR_ENTITY_ID: cover_id}, blocking=True
+        )
+    assert err.value.translation_placeholders == {"temperature": "-3"}
 
 
 async def test_frost_lock_disabled_in_the_registry_does_not_lock(

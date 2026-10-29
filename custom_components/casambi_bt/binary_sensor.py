@@ -1,7 +1,6 @@
 """Binary Sensor implementation for Casambi."""
 
 import logging
-from typing import Final
 
 from CasambiBt import Unit, UnitControlType
 
@@ -21,17 +20,12 @@ from .entities import (
     CasambiNetworkEntity,
     TypedEntityDescription,
 )
+from .platform_packets import PACKET_PIR, PACKET_RAIN
 
 _LOGGER = logging.getLogger(__name__)
 
 # State is pushed by the Casambi network, no coordinated polling is required.
 PARALLEL_UPDATES = 0
-
-PACKET_RAIN: Final = 0
-PACKET_PIR: Final = 3
-
-# Rain packets carry 1 while dry and 5 while raining.
-RAIN_THRESHOLD: Final = 2
 
 
 NETWORK_SENSORS: tuple[BinarySensorEntityDescription, ...] = (
@@ -102,11 +96,10 @@ class CasambiPacketBinarySensor(CasambiBroadcastUnitEntity, BinarySensorEntity):
     @property
     def is_on(self) -> bool | None:
         """Return True if the reading is above the threshold."""
-        unit = self._obj
-        raw = unit.sensor_cache.get(self._packet_type)
-        if raw is None:
+        value = self._api.platform_reading(self._obj, self._packet_type)
+        if value is None:
             return None
-        return raw >= self._threshold
+        return value >= self._threshold
 
 
 class CasambiRainSensor(CasambiPacketBinarySensor):
@@ -114,7 +107,6 @@ class CasambiRainSensor(CasambiPacketBinarySensor):
 
     _attr_device_class = BinarySensorDeviceClass.MOISTURE
     _packet_type = PACKET_RAIN
-    _threshold = RAIN_THRESHOLD
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a rain sensor entity."""

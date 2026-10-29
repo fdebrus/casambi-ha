@@ -1,10 +1,14 @@
 """Tests for the weather protection acting as a lock on the motors."""
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from CasambiBt.errors import BluetoothError
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from homeassistant.components.cover import (
     ATTR_POSITION,
@@ -17,6 +21,7 @@ from homeassistant.components.cover import (
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
 
 from .conftest import (
     NETWORK_ID,
@@ -24,6 +29,7 @@ from .conftest import (
     WINSOL_LOUVRE_UUID,
     WINSOL_SCREEN_UUID,
     entity_id_for as _entity_id,
+    push_platform,
     setup_entry as _setup,
     unit_by_uuid,
 )
@@ -31,10 +37,6 @@ from .conftest import (
 PROTECTION_ID = f"{NETWORK_ID}-weather-protection"
 LOUVRE_COVER_ID = f"{NETWORK_ID}-unit-{WINSOL_LOUVRE_UUID}-cover"
 SCREEN_COVER_ID = f"{NETWORK_ID}-unit-{WINSOL_SCREEN_UUID}-cover"
-
-# Sensor platform cache: packet 0 rain (>= 2 is wet), packet 1 wind (raw / 4
-# km/h). The fixture starts dry with exactly the 35 km/h threshold.
-RAIN, WIND = 0, 1
 
 
 async def _enable(hass: HomeAssistant, mock_casambi: MagicMock) -> None:
@@ -49,13 +51,14 @@ async def _enable(hass: HomeAssistant, mock_casambi: MagicMock) -> None:
     mock_casambi.setSlider.reset_mock()
 
 
-def _weather(hass: HomeAssistant, mock_casambi: MagicMock, **cache: int) -> None:
-    """Push new sensor platform readings."""
+def _weather(hass: HomeAssistant, mock_casambi: MagicMock, **readings: int) -> None:
+    """Push new sensor platform readings: rain 0/1, wind in km/h.
+
+    The fixture starts dry with exactly the 35 km/h threshold.
+    """
     sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
-    for packet, value in cache.items():
-        sensor_unit._sensor_cache[RAIN if packet == "rain" else WIND] = value  # noqa: SLF001
     handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
-    handler(sensor_unit)
+    push_platform(handler, sensor_unit, **readings)
 
 
 async def _call(hass: HomeAssistant, service: str, entity_id: str, **data: int) -> None:
@@ -104,12 +107,12 @@ async def test_rain_locks_the_louvres_only(
     """Test that rain refuses to open the louvres but leaves the screens alone."""
     await _setup(hass, mock_config_entry)
     # A calm day, so that only the rain holds anything.
-    _weather(hass, mock_casambi, wind=40)
+    _weather(hass, mock_casambi, wind=10)
     await _enable(hass, mock_casambi)
     louvre_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
     screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
 
-    _weather(hass, mock_casambi, rain=5)
+    _weather(hass, mock_casambi, rain=1)
     await hass.async_block_till_done()
     mock_casambi.setSlider.assert_awaited_once()
     mock_casambi.setSlider.reset_mock()
@@ -265,12 +268,12 @@ async def test_the_lock_is_released_by_the_hysteresis_and_the_switch(
     screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
 
     # 30 km/h is above the 28 km/h release point: still locked.
-    _weather(hass, mock_casambi, wind=120)
+    _weather(hass, mock_casambi, wind=30)
     await hass.async_block_till_done()
     with pytest.raises(ServiceValidationError):
         await _call(hass, SERVICE_OPEN_COVER, louvre_id)
 
-    _weather(hass, mock_casambi, wind=100)
+    _weather(hass, mock_casambi, wind=25)
     await hass.async_block_till_done()
     assert api.wind_active is False
     assert hass.states.get(louvre_id).attributes["weather_lock"] is None
@@ -279,7 +282,7 @@ async def test_the_lock_is_released_by_the_hysteresis_and_the_switch(
     mock_casambi.setSlider.assert_awaited_once()
 
     # Locked again by a gust, released at once by the switch.
-    _weather(hass, mock_casambi, wind=160)
+    _weather(hass, mock_casambi, wind=40)
     await hass.async_block_till_done()
     assert hass.states.get(screen_id).attributes["weather_lock"] == "wind"
     await hass.services.async_call(
@@ -344,13 +347,13 @@ async def test_nothing_is_sent_while_the_link_is_down(
     await _setup(hass, mock_config_entry)
     api = mock_config_entry.runtime_data
     # Calm, so that enabling sends nothing.
-    _weather(hass, mock_casambi, wind=40)
+    _weather(hass, mock_casambi, wind=10)
     await _enable(hass, mock_casambi)
 
     mock_casambi.connected = False
     api._notify_connection_state()  # noqa: SLF001
     await hass.async_block_till_done()
-    _weather(hass, mock_casambi, wind=160)
+    _weather(hass, mock_casambi, wind=40)
     await hass.async_block_till_done()
     mock_casambi.setLevel.assert_not_awaited()
     mock_casambi.setSlider.assert_not_awaited()
@@ -403,7 +406,7 @@ async def test_a_lock_change_during_an_outage_leaves_the_motion_alone(
         screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
         screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
-        _weather(hass, mock_casambi, wind=40)
+        _weather(hass, mock_casambi, wind=10)
         await _enable(hass, mock_casambi)
 
         screen.setStateFromBytes(bytes.fromhex("818b080000"))
@@ -414,7 +417,7 @@ async def test_a_lock_change_during_an_outage_leaves_the_motion_alone(
         await hass.async_block_till_done()
 
         # The wind rises while the link is down.
-        _weather(hass, mock_casambi, wind=160)
+        _weather(hass, mock_casambi, wind=40)
         await hass.async_block_till_done()
 
         mock_casambi.connected = True
@@ -425,3 +428,107 @@ async def test_a_lock_change_during_an_outage_leaves_the_motion_alone(
         state = hass.states.get(screen_id)
         assert state.state == "open"
         assert state.attributes["weather_lock"] == "wind"
+
+
+async def test_a_screen_arriving_on_its_estimate_is_sent_back(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the app extending the screen in the wind, with one push only.
+
+    The screen reports its target once and nothing when it arrives; the
+    watcher only ran on pushes, so it never sent the screen back.
+    """
+    clock = [1000.0]
+    with (
+        patch(
+            "custom_components.casambi_bt.cover.monotonic",
+            side_effect=lambda: clock[0],
+        ),
+        patch(
+            "custom_components.casambi_bt.switch.monotonic",
+            side_effect=lambda: clock[0],
+        ),
+    ):
+        await _setup(hass, mock_config_entry)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+        screen.setStateFromBytes(bytes.fromhex("818b080000"))
+        handler(screen)
+        clock[0] = 1100.0
+        await _enable(hass, mock_casambi)
+
+        clock[0] += 40
+        screen.setStateFromBytes(bytes.fromhex("818b08f00f"))
+        handler(screen)
+        await hass.async_block_till_done()
+        mock_casambi.setLevel.assert_not_awaited()
+
+        clock[0] += 40
+        async_fire_time_changed(hass, dt_util.utcnow() + timedelta(seconds=1))
+        await hass.async_block_till_done()
+        mock_casambi.setLevel.assert_awaited_once()
+        assert mock_casambi.setLevel.await_args.args[1] == 0
+
+
+async def test_a_louvre_that_stays_short_of_closed_is_retried_less_often(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test re-securing a louvre an obstacle stops at slider 10.
+
+    It used to be sent back, and logged, every 30 s for as long as the
+    wind blew; the interval now doubles while the louvre gets nowhere.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.switch.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+        await _enable(hass, mock_casambi)
+
+        async def stuck_at_10(after: float) -> int:
+            clock[0] += after
+            louvre.setStateFromBytes(bytes.fromhex("410100a000"))
+            handler(louvre)
+            await hass.async_block_till_done()
+            return mock_casambi.setSlider.await_count
+
+        assert await stuck_at_10(31) == 1
+        assert await stuck_at_10(31) == 2
+        # No progress: the next try waits 60 s, not 30.
+        assert await stuck_at_10(31) == 2
+        assert await stuck_at_10(30) == 3
+
+
+async def test_a_storm_above_63_kmh_keeps_the_lock(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test sensor platform readings of 64 km/h and more.
+
+    Read from the library's sensor cache they wrapped at 64: a 70 km/h gust
+    read as 6 km/h and released the lock in the middle of a storm.
+    """
+    await _setup(hass, mock_config_entry)
+    await _enable(hass, mock_casambi)
+    api = mock_config_entry.runtime_data
+    screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
+
+    _weather(hass, mock_casambi, wind=70)
+    await hass.async_block_till_done()
+
+    assert api.wind_active is True
+    assert hass.states.get(screen_id).attributes["weather_lock_value"] == 70.0
+    wind_id = _entity_id(
+        hass, "sensor", f"{NETWORK_ID}-unit-{SENSOR_PLATFORM_UUID}-wind"
+    )
+    assert float(hass.states.get(wind_id).state) == 70.0
