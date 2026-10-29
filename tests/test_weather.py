@@ -560,6 +560,45 @@ async def test_frost_lock_reads_the_system_unit(
     assert api.frost_lock_temperature(louvre) == pytest.approx(1.0)
 
 
+async def test_frost_lock_disabled_in_the_registry_does_not_lock(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a frost lock switch disabled as an entity locks nothing.
+
+    The lock used to default to armed when no switch had registered, so a
+    disabled switch held the louvres shut in the cold with no way to turn
+    it off, while the error said to turn it off.
+    """
+    hass.states.async_set(TEMP_SENSOR, "0.5")
+    mock_config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        mock_config_entry, options={CONF_TEMPERATURE_ENTITY: TEMP_SENSOR}
+    )
+    er.async_get(hass).async_get_or_create(
+        "switch",
+        DOMAIN,
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-frost-lock",
+        config_entry=mock_config_entry,
+        disabled_by=er.RegistryEntryDisabler.USER,
+    )
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    cover_id = _entity_id(
+        hass, "cover", f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover"
+    )
+    await hass.services.async_call(
+        "cover",
+        "set_cover_position",
+        {ATTR_ENTITY_ID: cover_id, "position": 80},
+        blocking=True,
+    )
+    mock_casambi.setSlider.assert_awaited_once()
+
+
 async def test_frost_lock(
     hass: HomeAssistant,
     mock_casambi: MagicMock,

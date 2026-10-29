@@ -54,8 +54,9 @@ USER_SCHEMA: Any = vol.Schema(
     }
 )
 
-# Settings asked at setup that the options flow can change later.
-_USER_FLAGS = (CONF_IMPORT_GROUPS, CONF_VERTICAL_AS_COVER)
+# Settings asked at setup that the options flow can change later, with
+# the defaults of the setup form (older entries may lack them in data).
+_USER_FLAGS = {CONF_IMPORT_GROUPS: True, CONF_VERTICAL_AS_COVER: False}
 
 REAUTH_SCHEMA: Any = vol.Schema(
     {
@@ -108,8 +109,11 @@ async def _async_try_connect(
     return info, {}
 
 
-class OptionsFlow(config_entries.OptionsFlow):
-    """Handle an options flow for Casambi Bluetooth."""
+class OptionsFlow(config_entries.OptionsFlowWithReload):
+    """Handle an options flow for Casambi Bluetooth.
+
+    Home Assistant reloads the entry once the options are saved.
+    """
 
     def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
         """Initialize the options flow."""
@@ -214,17 +218,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         existing_entry = await self.async_set_unique_id(id)
 
         if existing_entry:
-            changed = self.hass.config_entries.async_update_entry(
-                existing_entry, unique_id=id, title=title, data=data
-            )
-
-            if not changed:
+            if existing_entry.title == title and existing_entry.data == data:
                 return self.async_abort(reason="already_configured")
-
-            self.hass.async_create_task(
-                self.hass.config_entries.async_reload(existing_entry.entry_id)
+            return self.async_update_reload_and_abort(
+                existing_entry,
+                title=title,
+                data=data,
+                reason="reauth_successful",
             )
-            return self.async_abort(reason="reauth_successful")
 
         return self.async_create_entry(title=title, data=data)
 
@@ -306,7 +307,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     return self.async_abort(reason="wrong_network")
                 # The two flags are also options, which take precedence
                 # over the entry data once the options flow has been used.
-                self.hass.config_entries.async_update_entry(
+                return self.async_update_reload_and_abort(
                     entry,
                     title=info["title"],
                     data={**entry.data, **user_input},
@@ -314,9 +315,8 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         **entry.options,
                         **{key: user_input[key] for key in _USER_FLAGS},
                     },
+                    reason="reconfigure_successful",
                 )
-                await self.hass.config_entries.async_reload(entry.entry_id)
-                return self.async_abort(reason="reconfigure_successful")
 
             return self.async_show_form(
                 step_id="reconfigure",
@@ -328,7 +328,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         current = {
             **entry.data,
-            **{key: entry_option(entry, key, entry.data[key]) for key in _USER_FLAGS},
+            **{
+                key: entry_option(entry, key, default)
+                for key, default in _USER_FLAGS.items()
+            },
         }
         return self.async_show_form(
             step_id="reconfigure",
@@ -356,17 +359,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
             info, errors = await _async_try_connect(self.hass, data)
             if info is not None:
-                self.hass.config_entries.async_update_entry(
-                    self.entry,
-                    data=data,
+                return self.async_update_reload_and_abort(
+                    self.entry, data=data, reason="reauth_successful"
                 )
-                await self.hass.config_entries.async_reload(self.entry.entry_id)
-                return self.async_abort(reason="reauth_successful")
 
+        # The stored password is the one that was refused: don't send it to
+        # the browser as a suggestion.
         return self.async_show_form(
             step_id="reauth_confirm",
-            data_schema=self.add_suggested_values_to_schema(
-                REAUTH_SCHEMA, self.entry.data
-            ),
+            data_schema=REAUTH_SCHEMA,
             errors=errors,
         )

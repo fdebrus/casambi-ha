@@ -356,7 +356,7 @@ async def test_louvre_entities_write_only_what_changed(
     cycles through its sensor channels, and every entity of the unit is
     notified each time. A channel sensor writes once, when its channel comes
     round; the automation switches and dials, whose values are not in the
-    pushed state, never write; the cover writes on every push.
+    pushed state, never write; the cover writes only when it moves.
     """
     await _setup(hass, mock_config_entry)
 
@@ -395,13 +395,21 @@ async def test_louvre_entities_write_only_what_changed(
 
     assert [writes[e] for e in channel_ids] == [1, 1, 1, 1]
     assert [writes[e] for e in config_ids] == [0, 0, 0, 0, 0]
-    assert writes[cover_id] == 4
+    # The rotation moves nothing: the cover keeps showing closed.
+    assert writes[cover_id] == 0
 
     # The same packet again changes nothing a sensor shows.
     handler(louvre)
     await hass.async_block_till_done()
     assert [writes[e] for e in channel_ids] == [1, 1, 1, 1]
-    assert writes[cover_id] == 5
+    assert writes[cover_id] == 0
+
+    # The louvres move to slider 64: only now does the cover write.
+    louvre.setStateFromBytes(bytes.fromhex("2403000004"))
+    handler(louvre)
+    await hass.async_block_till_done()
+    assert writes[cover_id] == 1
+    assert [writes[e] for e in channel_ids] == [1, 1, 1, 1]
 
 
 async def test_screen_cover(
@@ -766,6 +774,46 @@ async def test_louvres_reverse_while_running(
     await call(SERVICE_CLOSE_COVER)
     assert _bit_writes(mock_casambi)[-1] == (36, 1)
     mock_casambi.setSlider.assert_not_awaited()
+
+
+async def test_louvres_run_of_unknown_direction_is_stopped_then_sent(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test open during a button run whose direction is not known.
+
+    After a reconnect in the middle of a run nothing says which way it
+    goes, and pressing the button twice restarts it opposite a run Home
+    Assistant never saw. The run is stopped and the end sent as a position.
+    """
+    await _setup(hass, mock_config_entry)
+    api = mock_config_entry.runtime_data
+    entity_id = _entity_id(
+        hass,
+        COVER_DOMAIN,
+        f"{mock_casambi.networkId}-unit-{WINSOL_LOUVRE_UUID}-cover",
+    )
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+    handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+
+    mock_casambi.connected = False
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    mock_casambi.connected = True
+    api._notify_connection_state()  # noqa: SLF001
+    # Back in the middle of a run (bit 36 set) from slider 103.
+    louvre.setStateFromBytes(bytes.fromhex("4101007016"))
+    handler(louvre)
+    await hass.async_block_till_done()
+
+    await hass.services.async_call(
+        COVER_DOMAIN, SERVICE_OPEN_COVER, {ATTR_ENTITY_ID: entity_id}, blocking=True
+    )
+    assert _bit_writes(mock_casambi) == [(36, 0)]
+    mock_casambi.setSlider.assert_awaited_once()
+    assert mock_casambi.setSlider.await_args.args[1] == 255
 
 
 async def test_louvres_forget_the_direction_when_the_link_drops(

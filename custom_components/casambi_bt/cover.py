@@ -261,10 +261,12 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         """Tell the weather protection how to see whether the motor rests."""
         await super().async_added_to_hass()
         self._api.register_rest_check(self._obj, self._at_rest)
+        self._api.register_lock_listener(self._write_state)
 
     async def async_will_remove_from_hass(self) -> None:
         """Withdraw the rest check."""
         self._api.unregister_rest_check(self._obj)
+        self._api.unregister_lock_listener(self._write_state)
         await super().async_will_remove_from_hass()
 
     def _at_rest(self) -> bool:
@@ -280,6 +282,21 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             "weather_lock_value": self._api.wind_kmh if reason == "wind" else None,
         }
 
+    def _snapshot(self) -> object:
+        """Write only when what the cover shows changed.
+
+        The louvre motor pushes its state every few seconds as it cycles
+        through its sensor channels; most pushes change nothing here. A
+        moving screen's estimate is refreshed by its own timer.
+        """
+        return (
+            self.current_cover_position,
+            self.is_opening,
+            self.is_closing,
+            self.available,
+            tuple(self.extra_state_attributes.items()),
+        )
+
     def _check_weather_lock(self, raw_target: int | None) -> None:
         """Refuse to move the motor out of safety while the weather holds it.
 
@@ -293,7 +310,10 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         if reason is None:
             return
         current = self._raw_position(self._obj)
-        if raw_target is not None and current is not None and raw_target <= current:
+        if raw_target == 0 or (
+            raw_target is not None and current is not None and raw_target <= current
+        ):
+            # Towards safety, which needs no known position to be safe.
             return
         wind = self._api.wind_kmh
         _LOGGER.info(
@@ -416,6 +436,14 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             if self._toggle_running():
                 if self._last_raising == raising:
                     return
+                if self._last_raising is None:
+                    # A run already under way when the link came back:
+                    # which way the bit restarts it is anyone's guess, so
+                    # stop it and send the end as a position.
+                    self._commanded_at = None
+                    await self._set_bit(0)
+                    await self._async_casa_command(self._send_position(raw_end))
+                    return
                 # Like pressing the button twice: stop, then run back.
                 await self._set_bit(0)
                 await self._set_bit(1)
@@ -466,8 +494,9 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
 class CasambiLouvreCover(CasambiMotorCover):
     """Cover for louvre motors whose position is a Casambi slider.
 
-    E.g. the Winsol Lamel: the slider is the louvre angle (0-142 degrees on
-    the wire, normalized to 0-255 by the library).
+    E.g. the Winsol Lamel: the slider is the louvre angle, 0-142 degrees
+    reported by the motor on the 8-bit scale 0-255 (fully open reads 255 in
+    the captures).
     """
 
     def _raw_position(self, unit: Unit) -> int | None:

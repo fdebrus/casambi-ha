@@ -3,7 +3,13 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from CasambiBt.errors import AuthenticationError, BluetoothError, ProtocolError
+from CasambiBt._constants import ConnectionState
+from CasambiBt.errors import (
+    AuthenticationError,
+    BluetoothError,
+    ConnectionStateError,
+    ProtocolError,
+)
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -164,6 +170,68 @@ async def test_reconnect_keeps_retrying_protocol_errors(
         RECONNECT_BACKOFF_MAX,
     ]
     assert mock_config_entry.runtime_data.available
+
+
+async def test_reconnect_retries_a_link_lost_during_the_handshake(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a connection state error is retried like a bluetooth error.
+
+    The library raises it when the link drops in the middle of the key
+    exchange; the reconnect task used to end on it for good.
+    """
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+
+    mock_casambi.connected = False
+    lost = ConnectionStateError(ConnectionState.CONNECTED, ConnectionState.NONE)
+    mock_casambi.reconnect.side_effect = _outcomes(mock_casambi, lost, None)
+
+    with patch(
+        "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
+    ) as sleep:
+        disconnect()
+        await hass.async_block_till_done()
+
+    assert mock_casambi.reconnect.await_count == 2
+    assert _backoffs(sleep) == [RECONNECT_BACKOFF_START]
+    assert mock_config_entry.runtime_data.available
+
+
+async def test_reconnect_keeps_trying_after_an_unexpected_error(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Test that an error nobody expected slows the retries, not ends them.
+
+    With the task gone only an advertisement could start a new one, and
+    Home Assistant does not pass on identical advertisements.
+    """
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+
+    mock_casambi.connected = False
+    mock_casambi.reconnect.side_effect = _outcomes(
+        mock_casambi, RuntimeError("boom"), RuntimeError("boom"), None
+    )
+
+    with patch(
+        "custom_components.casambi_bt.asyncio.sleep", new_callable=AsyncMock
+    ) as sleep:
+        disconnect()
+        await hass.async_block_till_done()
+
+    assert mock_casambi.reconnect.await_count == 3
+    assert _backoffs(sleep) == [RECONNECT_BACKOFF_MAX, RECONNECT_BACKOFF_MAX]
+    assert mock_config_entry.runtime_data.available
+    # The traceback is logged once, not on every attempt.
+    assert caplog.text.count("Unexpected error reconnecting") == 1
 
 
 async def test_reconnect_auth_failure_starts_reauth(

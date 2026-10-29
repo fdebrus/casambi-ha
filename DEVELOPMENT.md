@@ -34,9 +34,16 @@ operation, not an error.
   handshake and never logs in, so it cannot raise `AuthenticationError`;
   the reauth flow is only ever started from the initial connect (setup or
   a Home Assistant restart).
+* **A link lost mid-handshake is a bluetooth failure.** The library raises
+  `ConnectionStateError`, not `BluetoothError`, when the link drops during
+  the key exchange; it is retried like one, at setup (`ConfigEntryNotReady`),
+  in the reconnect loop and in the proxy. Any other unexpected error keeps
+  the loop going at `RECONNECT_BACKOFF_MAX`, its traceback logged once:
+  with the task gone only an advertisement could start a new one, and
+  habluetooth does not pass on an advertisement identical to the last.
 * **Writes trigger reconnects.** Entities reach the library through
   `CasambiProxy`, which wraps every coroutine call: a `BluetoothError`
-  during a write with the library no longer reporting itself connected
+  (or `ConnectionStateError`) during a write with the library no longer reporting itself connected
   means it gave the link up without running its disconnect callbacks, so
   the entities are told the link is down and a reconnect is scheduled,
   exactly as after a reported disconnect. A write that fails while the
@@ -59,7 +66,13 @@ operation, not an error.
   stay at debug level.
 * **Unloading wins.** `disconnect()` sets `_closing`, cancels a running
   reconnect task and waits up to 5 s for it; nothing schedules a reconnect
-  afterwards, not even a write failing during the teardown.
+  afterwards, not even a write failing during the teardown. It only runs
+  once the platforms unloaded: entities that stay up keep their link.
+* **One reload per change.** The options flow is an
+  `OptionsFlowWithReload`, and reconfigure and reauth finish with
+  `async_update_reload_and_abort`; there is no update listener, which
+  used to reload the entry a second time (each reload is a BLE connect
+  and a cloud login).
 
 ### Pitfalls found on the pergola
 
@@ -474,20 +487,32 @@ and `CasambiMotorCover._check_weather_lock(raw_target)` raises
 `ServiceValidationError` (`weather_lock_wind` / `weather_lock_rain`) on
 open, close and set-position commands that would move the motor above its
 current raw position (raw 0 is the safe end of both motors: louvres
-closed, screen retracted). The covers expose the lock as the
+closed, screen retracted); a target of raw 0 is always allowed, even
+before the position is known. The covers expose the lock as the
 `weather_lock` and `weather_lock_value` attributes and are refreshed by
-`notify_weather_lock()` whenever a latch changes. The wall button and the
-app are not blocked; instead the switch listens to the motors' state
-pushes (`_motor_update`) and sends a motor that rests out of safety back,
-no more than once per `WEATHER_RESECURE_INTERVAL` (30 s) per motor. "At
-rest" comes from the cover through `CasambiApi.register_rest_check`: the
-bit is clear and, for a screen, its motion estimate has ended, because a
-screen ignores a position behind it while it moves (capture, below).
-Turning the switch off clears both latches and releases everything. A
-protective command that fails (`HomeAssistantError` from the proxy) is
-kept in `_pending` with the reading it failed on, and sent again on a
-later reading or when the connection comes back, as long as the rain or
-wind it answers to is still active.
+`notify_weather_lock()` whenever a latch changes: it only writes the
+covers' state (`register_lock_listener`). Replaying the units' callbacks
+instead fed their state from before an outage to the motion tracking and
+undid the reset the link drop had made. The wall button and the app are
+not blocked; instead the switch listens to the motors' state pushes
+(`_motor_update`) and sends a motor that rests out of safety back, no
+more than once per `WEATHER_RESECURE_INTERVAL` (30 s) per motor, offline
+units aside. "At rest" comes from the cover through
+`CasambiApi.register_rest_check`: the bit is clear and, for a screen, its
+motion estimate has ended, because a screen ignores a position behind it
+while it moves (capture, below). The switch registers its watcher as a
+late unit callback (`register_unit_updates(..., late=True)`), so it runs
+after the covers have seen the same push: the platforms are set up
+concurrently, and a watcher that ran first saw a screen that had just
+started moving as at rest. Turning the switch off clears both latches
+and releases everything. A protective command that fails
+(`HomeAssistantError` from the proxy) is kept in `_pending` with the
+reading it failed on, and sent again on a later reading, on the motor's
+next push once the interval has passed, or when the connection comes
+back, as long as the rain or wind it answers to is still active. While
+the link is down nothing is sent: the command goes straight to
+`_pending`, since a write then makes the library reconnect on its own,
+past the integration's backoff.
 
 **Frost lock**: a per-louvre config switch (on by default, restored).
 `CasambiApi.frost_lock_temperature(unit)` returns the reading while the
@@ -496,7 +521,9 @@ lock is on and the temperature entity reads below
 when the entity can't tell. The louvre cover then raises
 `ServiceValidationError` (`frost_lock`) on open and on any position above
 the current one, and sun tracking skips its update; closing, stopping and
-weather protection are not affected.
+weather protection are not affected. A louvre whose frost lock switch never
+registered (the entity is disabled in the registry) is not locked: nothing
+could turn the lock off, while the error says to.
 
 ## Protocol capture workflow (decoding the pergola)
 

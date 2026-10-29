@@ -2,7 +2,12 @@
 
 from unittest.mock import MagicMock, patch
 
-from CasambiBt.errors import AuthenticationError, NetworkUpdateError
+from CasambiBt._constants import ConnectionState
+from CasambiBt.errors import (
+    AuthenticationError,
+    ConnectionStateError,
+    NetworkUpdateError,
+)
 import httpx
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -116,7 +121,12 @@ async def test_setup_retries_when_the_cloud_is_down(
 
 @pytest.mark.parametrize(
     "error",
-    [NetworkUpdateError("Update failed: 502"), httpx.ConnectError("unreachable")],
+    [
+        NetworkUpdateError("Update failed: 502"),
+        httpx.ConnectError("unreachable"),
+        # The link dropped during the key exchange.
+        ConnectionStateError(ConnectionState.CONNECTED, ConnectionState.NONE),
+    ],
 )
 async def test_setup_retries_when_the_network_update_fails(
     hass: HomeAssistant,

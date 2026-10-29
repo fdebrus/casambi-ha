@@ -50,7 +50,7 @@ Everything else lives behind the integration's **Configure** button:
 
 | Option | Used for |
 |---|---|
-| Import groups | Casambi groups as group lights |
+| Import groups | Casambi groups of lights as group lights |
 | Vertical controls as covers | Light fixtures with a vertical channel (not needed for Winsol motors) |
 | Pergola orientation | Sun tracking — compass direction the pergola faces (180 = south) |
 | Temperature sensor | Temperature control and frost lock |
@@ -65,7 +65,7 @@ Units are classified by their control layout (`classify.py`): motors become cove
 
 | Hardware | Entities |
 |---|---|
-| Lights (dimmer, RGB(W), tunable white, XY) | `light`, plus group lights |
+| Lights (dimmer, RGB(W), tunable white, XY) | `light`, plus group lights. A group holding a louvre or a screen is not a light: a group command reaches every member, so "turn off all lights" would move the pergola |
 | Casambi scenes | `scene` |
 | Winsol louvres | `cover` (0–100 % = 0–142°) with stop; the automation switches and dials below; a **temperature** sensor and, as diagnostics, overcurrent events, travel distance and module state |
 | Winsol SO! screens | `cover` with position and stop |

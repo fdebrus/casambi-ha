@@ -25,7 +25,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import CasambiApi, CasambiConfigEntry
-from .classify import UnitKind, classify_unit
+from .classify import UnitKind
 from .const import CONF_IMPORT_GROUPS, DOMAIN, entry_option
 from .entities import (
     CasambiEntity,
@@ -61,8 +61,13 @@ async def async_setup_entry(
     light_entities: list[CasambiLight] = []
     registry = er.async_get(hass)
     for unit in casa_api.get_units(CASA_LIGHT_CTRL_TYPES):
-        kind = classify_unit(unit)
+        kind = casa_api.unit_kind(unit)
         if kind is UnitKind.LIGHT:
+            if capabilities(unit) == {ColorMode.UNKNOWN}:
+                # E.g. a white channel alone: Home Assistant refuses a light
+                # without a usable color mode, so there is nothing to show.
+                _LOGGER.debug("No light entity for %s: no usable mode", unit.name)
+                continue
             light_entities.append(CasambiLightUnit(casa_api, unit))
         elif kind is UnitKind.RELAY:
             # Relays used to be exposed as on/off lights; drop the stale
@@ -78,9 +83,70 @@ async def async_setup_entry(
 
     group_entities: list[CasambiLight] = []
     if entry_option(config_entry, CONF_IMPORT_GROUPS, True):
-        group_entities = [CasambiLightGroup(casa_api, g) for g in casa_api.get_groups()]
+        for group in casa_api.get_groups():
+            if _group_is_a_light(casa_api, group):
+                group_entities.append(CasambiLightGroup(casa_api, group))
+                continue
+            stale = registry.async_get_entity_id(
+                LIGHT_DOMAIN,
+                DOMAIN,
+                f"{casa_api.casa.networkId}-group-{group.groudId}",
+            )
+            if stale is not None:
+                _LOGGER.info(
+                    "Removing %s: group %s is not a light group", stale, group.name
+                )
+                registry.async_remove(stale)
 
     async_add_entities(light_entities + group_entities)
+
+
+def _group_is_a_light(api: CasambiApi, group: Group) -> bool:
+    """Return True if a Casambi group can be shown as a light.
+
+    A group command goes to every member, so a group holding a louvre or a
+    screen would move the motor on "turn off all lights": the screen's
+    position is its dimmer. Such a group gets no light; the motors have
+    their own covers, with the frost and weather locks. A group must also
+    hold at least one light.
+    """
+    kinds = {api.unit_kind(unit) for unit in group.units}
+    if kinds & {UnitKind.LOUVRE, UnitKind.SCREEN, UnitKind.UNSUPPORTED_MOTOR}:
+        return False
+    return any(
+        capabilities(unit) != {ColorMode.UNKNOWN}
+        for unit in group.units
+        if api.unit_kind(unit) is UnitKind.LIGHT
+    )
+
+
+def capabilities(unit: Unit) -> set[ColorMode]:
+    """Return the color modes a unit supports.
+
+    ONOFF, BRIGHTNESS and UNKNOWN only stand in when nothing better is
+    known; UNKNOWN means the unit has no usable mode at all.
+    """
+    supported: set[ColorMode] = set()
+    unit_modes = [uc.type for uc in unit.unitType.controls]
+
+    if UnitControlType.RGB in unit_modes and UnitControlType.WHITE in unit_modes:
+        supported.add(ColorMode.RGBW)
+    elif UnitControlType.RGB in unit_modes:
+        supported.add(ColorMode.RGB)
+    if UnitControlType.TEMPERATURE in unit_modes:
+        supported.add(ColorMode.COLOR_TEMP)
+    if UnitControlType.XY in unit_modes:
+        supported.add(ColorMode.XY)
+
+    if len(supported) == 0:
+        if UnitControlType.DIMMER in unit_modes:
+            supported.add(ColorMode.BRIGHTNESS)
+        elif UnitControlType.ONOFF in unit_modes:
+            supported.add(ColorMode.ONOFF)
+        else:
+            supported.add(ColorMode.UNKNOWN)
+
+    return supported
 
 
 class CasambiLight(CasambiEntity, LightEntity, metaclass=ABCMeta):
@@ -101,29 +167,6 @@ class CasambiLight(CasambiEntity, LightEntity, metaclass=ABCMeta):
 
         self._obj: Group | Unit
         super().__init__(api, description, obj)
-
-    def _capabilities_helper(self, unit: Unit) -> set[ColorMode]:
-        supported: set[ColorMode] = set()
-        unit_modes = [uc.type for uc in unit.unitType.controls]
-
-        if UnitControlType.RGB in unit_modes and UnitControlType.WHITE in unit_modes:
-            supported.add(ColorMode.RGBW)
-        elif UnitControlType.RGB in unit_modes:
-            supported.add(ColorMode.RGB)
-        if UnitControlType.TEMPERATURE in unit_modes:
-            supported.add(ColorMode.COLOR_TEMP)
-        if UnitControlType.XY in unit_modes:
-            supported.add(ColorMode.XY)
-
-        if len(supported) == 0:
-            if UnitControlType.DIMMER in unit_modes:
-                supported.add(ColorMode.BRIGHTNESS)
-            elif UnitControlType.ONOFF in unit_modes:
-                supported.add(ColorMode.ONOFF)
-            else:
-                supported.add(ColorMode.UNKNOWN)
-
-        return supported
 
     def _mode_helper(self, modes: set[ColorMode] | set[str] | None) -> ColorMode:
         if modes:
@@ -151,7 +194,7 @@ class CasambiLightUnit(CasambiLight, CasambiUnitEntity):
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a Casambi light entity."""
-        self._attr_supported_color_modes = self._capabilities_helper(unit)
+        self._attr_supported_color_modes = capabilities(unit)
 
         temp_control = unit.unitType.get_control(UnitControlType.TEMPERATURE)
         if (
@@ -267,10 +310,12 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
     def __init__(self, api: CasambiApi, group: Group) -> None:
         """Initialize a Casambi group entity."""
 
-        # Find union of supported color modes.
+        # Union of the modes of the members that are lights; relays and
+        # sensors in the group ignore the light commands.
+        lights = [u for u in group.units if api.unit_kind(u) is UnitKind.LIGHT]
         supported_modes: set[ColorMode] = set()
-        for unit in group.units:
-            supported_modes = supported_modes.union(self._capabilities_helper(unit))
+        for unit in lights:
+            supported_modes |= capabilities(unit)
 
         # Color temperature is supported for groups; the range is the
         # intersection of the members' ranges so that every member can
@@ -278,7 +323,7 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
         if ColorMode.COLOR_TEMP in supported_modes:
             minima: list[int] = []
             maxima: list[int] = []
-            for unit in group.units:
+            for unit in lights:
                 control = unit.unitType.get_control(UnitControlType.TEMPERATURE)
                 if control is None or control.min is None or control.max is None:
                     continue
@@ -290,16 +335,17 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
 
         # HA doesn't allow combining UNKNOWN, ONOFF, or BRIGHTNESS with more
         # capable modes, which can happen for groups with mixed unit types.
-        # Keep only the most capable modes in that case.
-        if len(supported_modes) > 1:
-            supported_modes.discard(ColorMode.UNKNOWN)
+        # Keep only the most capable modes in that case. Only groups with a
+        # usable light are created, so something is always left; UNKNOWN on
+        # its own would make Home Assistant refuse the entity.
+        supported_modes.discard(ColorMode.UNKNOWN)
         if len(supported_modes) > 1:
             supported_modes.discard(ColorMode.ONOFF)
         if len(supported_modes) > 1:
             supported_modes.discard(ColorMode.BRIGHTNESS)
 
         if len(supported_modes) == 0:
-            supported_modes.add(ColorMode.UNKNOWN)
+            supported_modes.add(ColorMode.ONOFF)
         self._attr_supported_color_modes = supported_modes
 
         desc = TypedEntityDescription(
@@ -315,11 +361,30 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
 
     @property
     def brightness(self) -> int | None:
-        """Return the brightness of the first fitting unit of the group."""
+        """Return the brightness of the group.
+
+        Taken from the first dimmable member that is on, so that a group
+        whose first member is off doesn't read as on at brightness 0.
+        """
+        level = self._lit_level()
+        if level is not None:
+            return level
         for unit in self._unit_map.values():
             if (
                 unit.unitType.get_control(UnitControlType.DIMMER)
                 and unit.state is not None
+            ):
+                return unit.state.dimmer
+        return None
+
+    def _lit_level(self) -> int | None:
+        """Return the level of the first dimmable member that is on."""
+        for unit in self._unit_map.values():
+            if (
+                unit.unitType.get_control(UnitControlType.DIMMER)
+                and unit.state is not None
+                and unit.state.dimmer
+                and unit.is_on
             ):
                 return unit.state.dimmer
         return None
@@ -389,13 +454,23 @@ class CasambiLightGroup(CasambiLight, CasambiNetworkGroup):
             await self._async_casa_command(self._api.casa.setColor(self._obj, rgb))
             await self._async_casa_command(self._api.casa.setWhite(self._obj, w))
             was_set = True
+        elif ATTR_XY_COLOR in kwargs:
+            await self._async_casa_command(
+                self._api.casa.setColorXY(self._obj, kwargs[ATTR_XY_COLOR])
+            )
+            was_set = True
 
         if not was_set:
             await self._async_casa_command(self._api.casa.turnOn(self._obj))
         elif ATTR_BRIGHTNESS not in kwargs:
             # Sync brightness for group so that everything turns on.
             # This might be a bit confusing because the rest isn't synced.
-            if self.brightness is not None:
+            # Only a member that is on gives a level worth copying; a level
+            # read from one that is off would switch the whole group off.
+            level = self._lit_level()
+            if level is not None:
                 await self._async_casa_command(
-                    self._api.casa.setLevel(self._obj, self.brightness)
+                    self._api.casa.setLevel(self._obj, level)
                 )
+            else:
+                await self._async_casa_command(self._api.casa.turnOn(self._obj))
