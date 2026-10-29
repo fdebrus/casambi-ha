@@ -17,6 +17,7 @@ from CasambiBt.errors import (
     AuthenticationError,
     BluetoothDeviceNotFoundError,
     BluetoothError,
+    ConnectionStateError,
     NetworkNotFoundError,
     NetworkUpdateError,
     ProtocolError,
@@ -103,26 +104,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
-    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-
+    # Option and reconfigure changes reload the entry from the flows
+    # (OptionsFlowWithReload, async_update_reload_and_abort), which Home
+    # Assistant refuses alongside an update listener.
     return True
-
-
-async def _async_update_listener(
-    hass: HomeAssistant, entry: CasambiConfigEntry
-) -> None:
-    """Reload the config entry when options change."""
-    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if not unload_ok:
+        # Entities are still up: keep the connection they rely on.
+        return False
 
     await entry.runtime_data.disconnect()
     _clear_unsupported_motors(hass, entry)
 
-    return unload_ok
+    return True
 
 
 def _unsupported_issue_prefix(entry: CasambiConfigEntry) -> str:
@@ -206,6 +204,9 @@ class CasambiApi:
         self.casa = cast("Casambi", CasambiProxy(self, self._casa))
 
         self._callback_map: dict[int, list[Callable[[Unit], None]]] = {}
+        # Callbacks that act on what the entities made of an update, run
+        # once all of the unit's entities have seen it.
+        self._late_callback_map: dict[int, list[Callable[[Unit], None]]] = {}
         self._switch_event_callbacks: list[Callable[[SwitchEvent], None]] = []
         self._connection_callbacks: list[Callable[[], None]] = []
 
@@ -222,6 +223,11 @@ class CasambiApi:
         # the weather protection only sends a moved motor back once it has
         # stopped, and a screen's motion is only known from its estimate.
         self._rest_checks: dict[str, Callable[[], bool]] = {}
+        # Covers to refresh when the weather lock changes.
+        self._lock_listeners: list[Callable[[], None]] = []
+        # A unit's kind follows from its type, which is fixed while the
+        # entry is loaded; the weather lock asks for it on every push.
+        self._unit_kinds: dict[str, UnitKind] = {}
         # Last numeric reading of the temperature source, for the frost lock.
         self.last_temperature: float | None = None
         # Registry id of the network device, set once it has been created so
@@ -271,7 +277,9 @@ class CasambiApi:
             raise ConfigEntryNotReady(
                 f"Network with address {self.address} wasn't found"
             ) from err
-        except BluetoothError as err:
+        except (BluetoothError, ConnectionStateError) as err:
+            # A link lost during the handshake surfaces as a connection
+            # state error rather than a bluetooth one.
             raise ConfigEntryNotReady("Failed to use bluetooth") from err
         except AuthenticationError as err:
             if _login_outage(err):
@@ -305,10 +313,11 @@ class CasambiApi:
 
         This runs as a single long-lived background task: it keeps trying
         until the network answers again, the entry is unloaded (the task is
-        cancelled) or the failure is one that retrying cannot fix.
+        cancelled) or the password was refused, which only the user can fix.
         """
         backoff = RECONNECT_BACKOFF_START
         protocol_error = False
+        unexpected_error = False
         started = monotonic()
         warned = False
         reason = ""
@@ -331,7 +340,9 @@ class CasambiApi:
                     raise BluetoothError(  # noqa: TRY301
                         "reconnect returned without a connection"
                     )
-            except BluetoothError as err:
+            except (BluetoothError, ConnectionStateError) as err:
+                # A link lost during the handshake surfaces as a connection
+                # state error, not a bluetooth one; both are worth a retry.
                 _LOGGER.debug(
                     "Connecting failed due to bluetooth error. Retrying",
                     exc_info=True,
@@ -366,12 +377,18 @@ class CasambiApi:
             except asyncio.CancelledError:
                 _LOGGER.debug("Reconnect task cancelled")
                 raise
-            except Exception:  # pylint: disable=broad-except
-                _LOGGER.exception(
-                    "Unexpected error reconnecting to the Casambi network %s",
-                    self.address,
-                )
-                return
+            except Exception as err:  # pylint: disable=broad-except
+                # Retry at the slowest pace rather than give up: with the
+                # task gone only an advertisement could start a new one,
+                # and Home Assistant does not repeat identical ones.
+                if not unexpected_error:
+                    _LOGGER.exception(
+                        "Unexpected error reconnecting to the Casambi network %s",
+                        self.address,
+                    )
+                unexpected_error = True
+                backoff = RECONNECT_BACKOFF_MAX
+                reason = f"unexpected error: {err!r}"
             else:
                 if warned:
                     _LOGGER.warning(
@@ -413,7 +430,7 @@ class CasambiApi:
         weather protection switch is turned off, so an off switch never
         locks anything.
         """
-        kind = classify_unit(unit)
+        kind = self.unit_kind(unit)
         if kind is UnitKind.LOUVRE:
             if self.wind_active:
                 return "wind"
@@ -422,6 +439,21 @@ class CasambiApi:
         elif kind is UnitKind.SCREEN and self.wind_active:
             return "wind"
         return None
+
+    def unit_kind(self, unit: Unit) -> UnitKind:
+        """Return how a unit is classified, computed once per unit."""
+        kind = self._unit_kinds.get(unit.uuid)
+        if kind is None:
+            kind = self._unit_kinds[unit.uuid] = classify_unit(unit)
+        return kind
+
+    def register_lock_listener(self, listener: Callable[[], None]) -> None:
+        """Register a cover to refresh when the weather lock changes."""
+        self._lock_listeners.append(listener)
+
+    def unregister_lock_listener(self, listener: Callable[[], None]) -> None:
+        """Stop refreshing a cover on weather lock changes."""
+        self._lock_listeners.remove(listener)
 
     def register_rest_check(self, unit: Unit, check: Callable[[], bool]) -> None:
         """Register how to tell whether a motor is at rest."""
@@ -438,14 +470,15 @@ class CasambiApi:
 
     @callback
     def notify_weather_lock(self) -> None:
-        """Run the motors' unit callbacks so that the covers show the lock.
+        """Refresh the covers so that they show the current weather lock.
 
-        The lock changes with the weather, not with a pushed state; this
-        refreshes the covers at once instead of at the motor's next push.
+        The lock changes with the weather, not with a pushed state. Only
+        the covers' state is written: replaying the units' own callbacks
+        would feed their stale state to the motion tracking, which during
+        an outage undoes what the link drop reset.
         """
-        for unit in self.get_units():
-            if classify_unit(unit) in (UnitKind.LOUVRE, UnitKind.SCREEN):
-                self._unit_changed_handler(unit)
+        for listener in list(self._lock_listeners):
+            listener()
 
     def frost_lock_temperature(self, unit: Unit) -> float | None:
         """Return the temperature that locks a louvre against frost, or None.
@@ -455,7 +488,9 @@ class CasambiApi:
         source can't tell (unavailable, not numeric), its last reading
         counts, so a dropped weather station doesn't unlock them.
         """
-        if not self.frost_lock.get(unit.uuid, True):
+        # No entry means the frost lock switch never registered (it is
+        # disabled in the registry), so nothing can turn the lock off.
+        if not self.frost_lock.get(unit.uuid, False):
             return None
         entity_id = entry_option(self.conf_entry, CONF_TEMPERATURE_ENTITY, None)
         if not entity_id:
@@ -567,21 +602,33 @@ class CasambiApi:
                 self.hass, self.reconnect(), "Reconnect"
             )
 
-    def register_unit_updates(self, unit: Unit, c: Callable[[Unit], None]) -> None:
+    def register_unit_updates(
+        self, unit: Unit, c: Callable[[Unit], None], *, late: bool = False
+    ) -> None:
         """Register a callback for unit updates.
 
         :param unit: The unit for which changes should be reported.
         :param c: The callback.
+        :param late: Run it after every other callback of the unit, for a
+            watcher that relies on the entities' view of the update (the
+            weather protection asks the screen cover whether it moves).
+            The platforms are set up concurrently, so the order in which
+            they register says nothing.
         """
-        self._callback_map.setdefault(unit.deviceId, []).append(c)
+        callbacks = self._late_callback_map if late else self._callback_map
+        callbacks.setdefault(unit.deviceId, []).append(c)
 
-    def unregister_unit_updates(self, unit: Unit, c: Callable[[Unit], None]) -> None:
+    def unregister_unit_updates(
+        self, unit: Unit, c: Callable[[Unit], None], *, late: bool = False
+    ) -> None:
         """Unregister a callback for unit updates.
 
         :param unit: The unit for which changes should no longer be reported.
         :param c: The callback.
+        :param late: Whether it was registered as a late callback.
         """
-        self._callback_map[unit.deviceId].remove(c)
+        callbacks = self._late_callback_map if late else self._callback_map
+        callbacks[unit.deviceId].remove(c)
 
     def register_connection_updates(self, c: Callable[[], None]) -> None:
         """Register a callback for connection state changes."""
@@ -607,9 +654,9 @@ class CasambiApi:
 
     @callback
     def _unit_changed_handler(self, unit: Unit) -> None:
-        if unit.deviceId not in self._callback_map:
-            return
-        for c in self._callback_map[unit.deviceId]:
+        for c in self._callback_map.get(unit.deviceId, ()):
+            c(unit)
+        for c in self._late_callback_map.get(unit.deviceId, ()):
             c(unit)
 
     @callback
@@ -668,7 +715,12 @@ class CasambiProxy:
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 result = await attr(*args, **kwargs)
-            except (BluetoothError, BluetoothDeviceNotFoundError, ProtocolError):
+            except (
+                BluetoothError,
+                BluetoothDeviceNotFoundError,
+                ConnectionStateError,
+                ProtocolError,
+            ):
                 # A write can fail while the library still considers itself
                 # connected (a timeout, say); its reconnect would then return
                 # at once. Only act when it has given the connection up

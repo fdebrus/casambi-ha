@@ -232,7 +232,7 @@ def make_winsol_relay_unit() -> Unit:
     state.onoff = False
     unit = _make_unit(
         10025,
-        11,
+        14,
         WINSOL_RELAY_UUID,
         "On-Off",
         [UnitControl(UnitControlType.ONOFF, 0, 1, 0, False)],
@@ -321,16 +321,16 @@ def mock_casambi() -> Generator[MagicMock]:
     casa.networkName = NETWORK_NAME
 
     light = make_light_unit()
-    louvre = make_vertical_light_unit()
+    vertical = make_vertical_light_unit()
     casa.units = [
         light,
-        louvre,
+        vertical,
         make_winsol_louvre_unit(),
         make_winsol_screen_unit(),
         make_winsol_relay_unit(),
         make_sensor_platform_unit(),
     ]
-    casa.groups = [Group(1, "Pergola", [light, louvre])]
+    casa.groups = [Group(1, "Pergola", [light, vertical])]
     casa.scenes = [Scene(1, "Evening")]
 
     with (

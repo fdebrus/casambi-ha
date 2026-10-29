@@ -225,6 +225,8 @@ async def test_options_flow(
         CONF_WIND_THRESHOLD: 35,
         CONF_FROST_LOCK_TEMPERATURE: 2.0,
     }
+    # The entry was reloaded once to apply them.
+    assert mock_casambi.connect.await_count == 2
 
 
 async def test_reauth_flow(
@@ -245,6 +247,11 @@ async def test_reauth_flow(
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reauth_confirm"
+    # The refused password is not sent back to the browser.
+    assert not any(
+        (key.description or {}).get("suggested_value")
+        for key in result["data_schema"].schema
+    )
 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"],
@@ -255,6 +262,8 @@ async def test_reauth_flow(
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "reauth_successful"
     assert mock_config_entry.data[CONF_PASSWORD] == "new-password"
+    # Setup, the check of the new password, then a single reload.
+    assert mock_casambi.connect.await_count == 3
 
 
 async def test_reconfigure_flow(
@@ -299,6 +308,44 @@ async def test_reconfigure_flow(
     assert mock_config_entry.data[CONF_PASSWORD] == "changed"
     # The flags entered here take effect even though options exist.
     assert mock_config_entry.options[CONF_IMPORT_GROUPS] is True
+    # Setup, the check of the new settings, then a single reload.
+    assert mock_casambi.connect.await_count == 3
+
+
+async def test_reconfigure_flow_entry_without_flags(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+) -> None:
+    """Test reconfiguring an entry whose data predates the setup flags.
+
+    Entries created by upstream or by early versions of this fork have no
+    vertical_as_cover in their data; the form used to raise KeyError.
+    """
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=NETWORK_ADDRESS,
+        title=NETWORK_NAME,
+        data={
+            CONF_ADDRESS: NETWORK_ADDRESS,
+            CONF_PASSWORD: "password",
+            CONF_IMPORT_GROUPS: True,
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_RECONFIGURE, "entry_id": entry.entry_id},
+    )
+    assert result["type"] is FlowResultType.FORM
+    suggested = {
+        key.schema: key.description["suggested_value"]
+        for key in result["data_schema"].schema
+    }
+    assert suggested[CONF_VERTICAL_AS_COVER] is False
 
 
 async def test_reconfigure_flow_wrong_network(

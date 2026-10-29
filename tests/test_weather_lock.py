@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
+from CasambiBt.errors import BluetoothError
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -293,3 +294,134 @@ async def test_the_lock_is_released_by_the_hysteresis_and_the_switch(
     mock_casambi.setLevel.reset_mock()
     await _call(hass, SERVICE_CLOSE_COVER, screen_id)
     mock_casambi.setLevel.assert_awaited_once()
+
+
+async def test_a_failed_command_is_retried_on_the_next_motor_push(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a protective command that failed is sent again later.
+
+    With a wind entity that holds steady no new reading comes to retry it,
+    and the motor pushes used to skip a unit whose command had failed.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.switch.monotonic",
+        side_effect=lambda: clock[0],
+    ):
+        await _setup(hass, mock_config_entry)
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+        mock_casambi.setSlider.side_effect = BluetoothError
+        await _enable(hass, mock_casambi)
+        mock_casambi.setSlider.side_effect = None
+
+        # Same open louvres, no new weather reading: sent again once the
+        # interval has passed.
+        clock[0] += 40
+        louvre.setStateFromBytes(bytes.fromhex("4101000008"))
+        handler(louvre)
+        await hass.async_block_till_done()
+        mock_casambi.setSlider.assert_awaited_once()
+        assert mock_casambi.setSlider.await_args.args[1] == 0
+
+
+async def test_nothing_is_sent_while_the_link_is_down(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the wind rising during an outage waits for the link.
+
+    A write while disconnected makes the library reconnect on its own,
+    past the integration's backoff; the command is kept and sent once the
+    network is back.
+    """
+    await _setup(hass, mock_config_entry)
+    api = mock_config_entry.runtime_data
+    # Calm, so that enabling sends nothing.
+    _weather(hass, mock_casambi, wind=40)
+    await _enable(hass, mock_casambi)
+
+    mock_casambi.connected = False
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    _weather(hass, mock_casambi, wind=160)
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_not_awaited()
+    mock_casambi.setSlider.assert_not_awaited()
+
+    mock_casambi.connected = True
+    api._notify_connection_state()  # noqa: SLF001
+    await hass.async_block_till_done()
+    mock_casambi.setLevel.assert_awaited_once()
+    mock_casambi.setSlider.assert_awaited_once()
+
+
+async def test_closing_is_allowed_while_the_position_is_unknown(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a move to the safe end needs no known position."""
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+    louvre._state = None  # noqa: SLF001
+    await _setup(hass, mock_config_entry)
+    await _enable(hass, mock_casambi)
+    louvre_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+    await _call(hass, SERVICE_CLOSE_COVER, louvre_id)
+    mock_casambi.setSlider.assert_awaited_once()
+    assert mock_casambi.setSlider.await_args.args[1] == 0
+    with pytest.raises(ServiceValidationError):
+        await _call(hass, SERVICE_OPEN_COVER, louvre_id)
+
+
+async def test_a_lock_change_during_an_outage_leaves_the_motion_alone(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that refreshing the lock does not replay stale states.
+
+    It used to rerun every callback of the motors, which fed their state
+    from before the outage to the screen's motion tracking: after the
+    reconnect a screen at rest was shown closing for half a minute.
+    """
+    clock = [1000.0]
+    with patch(
+        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+    ):
+        await _setup(hass, mock_config_entry)
+        api = mock_config_entry.runtime_data
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+        screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
+        _weather(hass, mock_casambi, wind=40)
+        await _enable(hass, mock_casambi)
+
+        screen.setStateFromBytes(bytes.fromhex("818b080000"))
+        handler(screen)
+        clock[0] += 100
+        mock_casambi.connected = False
+        api._notify_connection_state()  # noqa: SLF001
+        await hass.async_block_till_done()
+
+        # The wind rises while the link is down.
+        _weather(hass, mock_casambi, wind=160)
+        await hass.async_block_till_done()
+
+        mock_casambi.connected = True
+        api._notify_connection_state()  # noqa: SLF001
+        screen.setStateFromBytes(bytes.fromhex("818b08800c"))
+        handler(screen)
+        await hass.async_block_till_done()
+        state = hass.states.get(screen_id)
+        assert state.state == "open"
+        assert state.attributes["weather_lock"] == "wind"

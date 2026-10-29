@@ -328,7 +328,7 @@ class CasambiSunTrackingSwitch(CasambiLouvreAutomationSwitch):
 
     @callback
     def _interval_update(self, _now: Any) -> None:
-        # Owned by the entry, so an unload cancels it.
+        # Owned by the entry, so an unload waits for it.
         self._config_entry.async_create_task(self.hass, self._async_apply())
 
     def _temperature_bias(self) -> float:
@@ -546,7 +546,8 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         for unit in self._sensor_platforms:
             self._api.register_unit_updates(unit, self._sensor_update)
         for unit in (*self._louvres, *self._screens):
-            self._api.register_unit_updates(unit, self._motor_update)
+            # After the covers, which tell whether the motor still moves.
+            self._api.register_unit_updates(unit, self._motor_update, late=True)
         if self._rain_entity:
             self.async_on_remove(
                 async_track_state_change_event(
@@ -567,7 +568,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         for unit in self._sensor_platforms:
             self._api.unregister_unit_updates(unit, self._sensor_update)
         for unit in (*self._louvres, *self._screens):
-            self._api.unregister_unit_updates(unit, self._motor_update)
+            self._api.unregister_unit_updates(unit, self._motor_update, late=True)
         await super().async_will_remove_from_hass()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -607,11 +608,13 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         for the rest is what makes the command take.
         """
         reason = self._api.weather_lock(unit)
-        if reason is None or not self._api.available or unit.uuid in self._pending:
+        # A unit whose command failed is retried here too: with a steady
+        # wind entity no new reading would come to retry it.
+        if reason is None or not self._api.available or not unit.online:
             return
         if not self._api.unit_at_rest(unit):
             return
-        retract = classify_unit(unit) is UnitKind.SCREEN
+        retract = self._api.unit_kind(unit) is UnitKind.SCREEN
         state = unit.state
         raw = (state.dimmer if retract else state.slider) if state else None
         if not raw:
@@ -641,7 +644,12 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         """Retract a screen or close a louvre in the background."""
         self._pending.pop(unit.uuid, None)
         self._secured_at[unit.uuid] = monotonic()
-        # Owned by the entry, so an unload cancels it.
+        if not self._api.available:
+            # The library would try to reconnect inside the write, past the
+            # integration's backoff; the connection callback sends it later.
+            self._pending[unit.uuid] = (unit, retract, self._reading)
+            return
+        # Owned by the entry, so an unload waits for it.
         self._config_entry.async_create_task(
             self.hass, self._async_secure(unit, retract)
         )
