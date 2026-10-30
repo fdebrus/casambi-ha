@@ -188,3 +188,27 @@ async def test_white_only_unit_gets_no_light(
     )
     # The rest of the network is still set up.
     assert _group_light(hass, 1) is not None
+
+
+async def test_group_with_the_heating_relay_reads_off_with_its_lights_off(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a relay in a group of lights does not make it read on.
+
+    The relay ignores the group's light commands, so a group reading on
+    while the heating runs could not be switched off from Home Assistant.
+    """
+    relay = unit_by_uuid(mock_casambi, WINSOL_RELAY_UUID)
+    relay.state.onoff = True
+    lamp = _tunable_light(33, "unit-tunable-garden", 0)
+    lamp._on = False  # noqa: SLF001
+    mock_casambi.units.append(lamp)
+    mock_casambi.groups.append(Group(8, "Garden", [relay, lamp]))
+    await _setup(hass, mock_config_entry)
+
+    entity_id = _group_light(hass, 8)
+    assert entity_id is not None
+    assert hass.states.get(entity_id).state == "off"

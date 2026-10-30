@@ -1043,7 +1043,7 @@ async def test_environment_sensors(
     network_id = mock_casambi.networkId
     prefix = f"{network_id}-unit-{SENSOR_PLATFORM_UUID}"
 
-    # sensor_cache: {0: 1 (dry), 1: 140 (wind), 2: 40 (solar), 3: 0 (no PIR)}
+    # The fixture reported dry, 35 km/h, solar 10, no motion after connecting.
     wind = hass.states.get(_entity_id(hass, "sensor", f"{prefix}-wind"))
     assert wind is not None
     assert float(wind.state) == 35.0
@@ -1067,6 +1067,50 @@ async def test_environment_sensors(
     presence = hass.states.get(_entity_id(hass, "binary_sensor", f"{prefix}-presence"))
     assert presence is not None
     assert presence.state == "on"
+
+
+def test_plain_dimmer_in_screen_mode_stays_a_light() -> None:
+    """Test that only the SO!'s layout makes an EXT/1ch/Dim unit a screen.
+
+    A plain dimmer in that mode used to become a cover, which the weather
+    protection would "retract" to level 0.
+    """
+    dimmer = make_winsol_screen_unit()
+    dimmer.unitType.__dict__["controls"] = [
+        UnitControl(UnitControlType.DIMMER, 0, 8, 255, False)
+    ]
+    assert classify_unit(dimmer) is UnitKind.LIGHT
+    assert classify_unit(make_winsol_screen_unit()) is UnitKind.SCREEN
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(17, "17"), (0xFFFFFD, "-3"), (253, "unknown")],
+)
+async def test_louvre_temperature_below_zero(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    value: int,
+    expected: str,
+) -> None:
+    """Test the louvre's temperature channel past what the captures showed.
+
+    Read unsigned, a sub-zero reading would show 16.7 million °C (or 253 °C)
+    and ruin the statistics; implausible values are dropped.
+    """
+    await _setup(hass, mock_config_entry)
+    louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+    handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+    louvre.setStateFromBytes((1 | value << 4).to_bytes(5, "little"))
+    handler(louvre)
+    await hass.async_block_till_done()
+
+    entity_id = _entity_id(
+        hass, "sensor", f"{NETWORK_ID}-unit-{WINSOL_LOUVRE_UUID}-channel-1"
+    )
+    assert hass.states.get(entity_id).state == expected
 
 
 def test_sensor_platform_detected_regardless_of_mode() -> None:

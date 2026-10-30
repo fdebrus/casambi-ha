@@ -26,14 +26,14 @@ import httpx
 
 from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import (
-    ConfigEntryAuthFailed,
-    ConfigEntryError,
-    ConfigEntryNotReady,
-)
+from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD, EVENT_HOMEASSISTANT_STOP
+from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, issue_registry as ir
+from homeassistant.helpers.event import (
+    EventStateChangedData,
+    async_track_state_change_event,
+)
 from homeassistant.helpers.httpx_client import get_async_client
 
 from . import switch_decoder
@@ -52,6 +52,7 @@ from .const import (
     RECONNECT_WARN_AFTER,
     entry_option,
 )
+from .platform_packets import decode_platform_packet
 from .readings import entity_temperature_c
 
 _LOGGER: Final = logging.getLogger(__name__)
@@ -67,6 +68,27 @@ def _login_outage(err: AuthenticationError) -> bool:
     """Return True if the login failed because of the cloud, not the password."""
     match = _LOGIN_STATUS.search(str(err))
     return match is not None and int(match.group(1)) in _TRANSIENT_LOGIN_STATUSES
+
+
+# Failures of the BLE link. bleak-esphome reports a GATT timeout through a
+# Bluetooth proxy as a bare TimeoutError, which the library lets through;
+# a link lost during the key exchange is a connection state error.
+LINK_ERRORS: Final = (BluetoothError, ConnectionStateError, TimeoutError)
+
+
+def cloud_outage(err: Exception) -> bool:
+    """Return True if a connect failed because the Casambi cloud did.
+
+    The library only carries on from its cache when the login cannot reach
+    the cloud at all; a bad answer to the login, to the network id or to
+    the network update stops it although the cache would do. A network the
+    cloud says it doesn't know is not an outage.
+    """
+    if isinstance(err, AuthenticationError):
+        return _login_outage(err)
+    if isinstance(err, NetworkNotFoundError):
+        return not str(err).startswith("API failed to find network")
+    return isinstance(err, (NetworkUpdateError, httpx.RequestError))
 
 
 # Wired push-button interfaces only report on the input stream, which the
@@ -86,6 +108,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: CasambiConfigEntry) -> b
     )
     await api.connect()
     entry.runtime_data = api
+
+    async def _stop(_event: Event) -> None:
+        # Bluetooth proxies drop their links as Home Assistant stops; that
+        # is no reason to start reconnecting during the shutdown.
+        await api.shut_down()
+
+    entry.async_on_unload(hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STOP, _stop))
+    api.track_temperature()
 
     # Create the network device before the platforms so that unit devices
     # can link to it by id.
@@ -219,17 +249,31 @@ class CasambiApi:
         # Last wind reading (km/h) the weather protection acted on.
         self.wind_kmh: float | None = None
         self.frost_lock: dict[str, bool] = {}
-        # How to tell whether a motor is at rest, registered by its cover:
-        # the weather protection only sends a moved motor back once it has
-        # stopped, and a screen's motion is only known from its estimate.
-        self._rest_checks: dict[str, Callable[[], bool]] = {}
+        # Where a motor rests (None while it moves), registered by its
+        # cover: the weather protection only sends a moved motor back once
+        # it has stopped, and a screen's motion and position are only known
+        # from its estimate.
+        self._rest_checks: dict[str, Callable[[], int | None]] = {}
         # Covers to refresh when the weather lock changes.
         self._lock_listeners: list[Callable[[], None]] = []
         # A unit's kind follows from its type, which is fixed while the
         # entry is loaded; the weather lock asks for it on every push.
         self._unit_kinds: dict[str, UnitKind] = {}
-        # Last numeric reading of the temperature source, for the frost lock.
+        # The latest reading of each sensor platform packet: uuid ->
+        # packet -> value, decoded from the pushed states (see
+        # platform_packets for why not from the library's sensor_cache).
+        self._platform_readings: dict[str, dict[int, int]] = {}
+        # Last numeric reading of the temperature source, for the frost lock
+        # and the temperature control; kept current by a state listener so
+        # that an unavailable source falls back to its real last reading.
         self.last_temperature: float | None = None
+        # Set by an advertisement of the network, or by a write that brought
+        # the link back, to cut the reconnect task's wait short.
+        self._wake = asyncio.Event()
+        # Whether an advertisement may cut the wait short: only while the
+        # last attempt found no device, so it cannot bypass the backoff of
+        # a network that is seen but refuses the connection.
+        self._wake_on_advertisement = False
         # Registry id of the network device, set once it has been created so
         # that unit devices can be linked to it.
         self.network_device_id: str | None = None
@@ -271,15 +315,26 @@ class CasambiApi:
                 self._casa.registerSwitchEventHandler(self._switch_event_handler)
                 self._handlers_registered = True
 
-            await self._casa.connect(device, self.password)
+            try:
+                await self._casa.connect(device, self.password)
+            except Exception as err:
+                if not cloud_outage(err):
+                    raise
+                # A cloud incident should not keep the pergola out of Home
+                # Assistant: the cached network is enough to connect.
+                _LOGGER.warning(
+                    "The Casambi cloud could not be used (%s); connecting to %s "
+                    "from the cached network",
+                    err,
+                    self.address,
+                )
+                await self._casa.connect(device, self.password, forceOffline=True)
             self._link_up = True
         except (BluetoothDeviceNotFoundError, NetworkNotFoundError) as err:
             raise ConfigEntryNotReady(
                 f"Network with address {self.address} wasn't found"
             ) from err
-        except (BluetoothError, ConnectionStateError) as err:
-            # A link lost during the handshake surfaces as a connection
-            # state error rather than a bluetooth one.
+        except LINK_ERRORS as err:
             raise ConfigEntryNotReady("Failed to use bluetooth") from err
         except AuthenticationError as err:
             if _login_outage(err):
@@ -290,15 +345,19 @@ class CasambiApi:
                 f"Failed to authenticate to network {self.address}"
             ) from err
         except (NetworkUpdateError, httpx.RequestError) as err:
-            # The cloud answered badly or not at all while the network
-            # configuration was being refreshed (the library only keeps
-            # going offline when the login itself can't reach it).
+            # The cloud failed and there is no cache to fall back on yet.
             raise ConfigEntryNotReady(
                 f"The Casambi cloud could not be reached: {err}"
             ) from err
         except Exception as err:  # pylint: disable=broad-except
-            raise ConfigEntryError(
-                f"Unexpected error creating network {self.address}"
+            # The BLE stack below the library raises more kinds of error
+            # than it documents; failing the entry for good would need a
+            # restart to recover from what is usually a passing hiccup.
+            _LOGGER.exception(
+                "Unexpected error connecting to the Casambi network %s", self.address
+            )
+            raise ConfigEntryNotReady(
+                f"Unexpected error connecting to network {self.address}"
             ) from err
 
         self._notify_connection_state()
@@ -328,6 +387,8 @@ class CasambiApi:
         await asyncio.sleep(0)
 
         while True:
+            self._wake.clear()
+            self._wake_on_advertisement = False
             try:
                 device = bluetooth.async_ble_device_from_address(
                     self.hass, self.address, connectable=True
@@ -340,9 +401,10 @@ class CasambiApi:
                     raise BluetoothError(  # noqa: TRY301
                         "reconnect returned without a connection"
                     )
-            except (BluetoothError, ConnectionStateError) as err:
+            except LINK_ERRORS as err:
                 # A link lost during the handshake surfaces as a connection
-                # state error, not a bluetooth one; both are worth a retry.
+                # state error, a proxy timeout as a bare TimeoutError; all
+                # are worth a retry.
                 _LOGGER.debug(
                     "Connecting failed due to bluetooth error. Retrying",
                     exc_info=True,
@@ -354,6 +416,9 @@ class CasambiApi:
                 # enough to recover if that notification never arrives.
                 backoff = max(backoff, RECONNECT_BACKOFF_NO_DEVICE)
                 reason = "no Bluetooth adapter or proxy in range sees it"
+                # The network's first advertisement once it is back ends
+                # the wait: Home Assistant passes on only that one.
+                self._wake_on_advertisement = True
             except ProtocolError as err:
                 # A garbled handshake, or the network key changed (the
                 # library only logs in on the first connect, so that never
@@ -414,8 +479,55 @@ class CasambiApi:
                     reason or "connection failed",
                 )
 
-            await asyncio.sleep(backoff)
+            await self._wait_backoff(backoff)
             backoff = min(RECONNECT_BACKOFF_MAX, backoff * RECONNECT_BACKOFF_STEP)
+
+    async def _wait_backoff(self, delay: float) -> None:
+        """Wait out a reconnect backoff, or less if woken."""
+        sleeper = asyncio.ensure_future(asyncio.sleep(delay))
+        waker = asyncio.ensure_future(self._wake.wait())
+        try:
+            await asyncio.wait((sleeper, waker), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            sleeper.cancel()
+            waker.cancel()
+
+    async def shut_down(self) -> None:
+        """Stop reconnecting for good: Home Assistant is stopping."""
+        self._closing = True
+        await self._cancel_reconnect()
+
+    def track_temperature(self) -> None:
+        """Keep the last reading of the temperature source current."""
+        entity_id = entry_option(self.conf_entry, CONF_TEMPERATURE_ENTITY, None)
+        if not entity_id:
+            return
+
+        @callback
+        def _changed(event: Event[EventStateChangedData]) -> None:
+            reading = entity_temperature_c(event.data["new_state"])
+            if reading is not None:
+                self.last_temperature = reading
+
+        self.last_temperature = entity_temperature_c(self.hass.states.get(entity_id))
+        self.conf_entry.async_on_unload(
+            async_track_state_change_event(self.hass, [entity_id], _changed)
+        )
+
+    def temperature_c(self) -> float | None:
+        """Return the temperature source in °C, or its last reading.
+
+        When the source can't tell (unavailable, not numeric) its last
+        reading counts, so a dropped weather station neither unlocks the
+        frost lock nor swings the temperature control.
+        """
+        entity_id = entry_option(self.conf_entry, CONF_TEMPERATURE_ENTITY, None)
+        if not entity_id:
+            return None
+        reading = entity_temperature_c(self.hass.states.get(entity_id))
+        if reading is not None:
+            self.last_temperature = reading
+        return self.last_temperature
 
     @property
     def available(self) -> bool:
@@ -440,6 +552,14 @@ class CasambiApi:
             return "wind"
         return None
 
+    def platform_reading(self, unit: Unit, packet: int) -> int | None:
+        """Return the latest value of a sensor platform packet, if any."""
+        return self._platform_readings.get(unit.uuid, {}).get(packet)
+
+    def platform_readings(self, unit: Unit) -> dict[int, int]:
+        """Return the latest value of every packet of a sensor platform."""
+        return dict(self._platform_readings.get(unit.uuid, {}))
+
     def unit_kind(self, unit: Unit) -> UnitKind:
         """Return how a unit is classified, computed once per unit."""
         kind = self._unit_kinds.get(unit.uuid)
@@ -455,18 +575,28 @@ class CasambiApi:
         """Stop refreshing a cover on weather lock changes."""
         self._lock_listeners.remove(listener)
 
-    def register_rest_check(self, unit: Unit, check: Callable[[], bool]) -> None:
-        """Register how to tell whether a motor is at rest."""
+    def register_rest_check(self, unit: Unit, check: Callable[[], int | None]) -> None:
+        """Register how to tell where a motor rests."""
         self._rest_checks[unit.uuid] = check
 
     def unregister_rest_check(self, unit: Unit) -> None:
         """Forget a motor's rest check."""
         self._rest_checks.pop(unit.uuid, None)
 
-    def unit_at_rest(self, unit: Unit) -> bool:
-        """Return True unless the unit's cover reports it moving."""
+    def unit_rest_position(self, unit: Unit) -> int | None:
+        """Return the raw position a motor rests at, or None while it moves.
+
+        Without a cover, the reported position is all there is.
+        """
         check = self._rest_checks.get(unit.uuid)
-        return check is None or check()
+        if check is not None:
+            return check()
+        state = unit.state
+        if state is None:
+            return None
+        if self.unit_kind(unit) is UnitKind.SCREEN:
+            return state.dimmer
+        return state.slider
 
     @callback
     def notify_weather_lock(self) -> None:
@@ -492,21 +622,16 @@ class CasambiApi:
         # disabled in the registry), so nothing can turn the lock off.
         if not self.frost_lock.get(unit.uuid, False):
             return None
-        entity_id = entry_option(self.conf_entry, CONF_TEMPERATURE_ENTITY, None)
-        if not entity_id:
-            return None
-        temperature = entity_temperature_c(self.hass.states.get(entity_id))
-        if temperature is not None:
-            self.last_temperature = temperature
-        if self.last_temperature is None:
+        temperature = self.temperature_c()
+        if temperature is None:
             return None
         threshold = entry_option(
             self.conf_entry,
             CONF_FROST_LOCK_TEMPERATURE,
             DEFAULT_FROST_LOCK_TEMPERATURE,
         )
-        if self.last_temperature < threshold:
-            return self.last_temperature
+        if temperature < threshold:
+            return temperature
         return None
 
     def get_units(
@@ -576,13 +701,17 @@ class CasambiApi:
     @callback
     def _casa_disconnect(self) -> None:
         self._link_up = False
-        self._notify_connection_state()
+        # Before telling the entities: one that raises must not leave the
+        # network without a reconnect.
         self._schedule_reconnect()
+        self._notify_connection_state()
 
     @callback
     def _link_restored(self) -> None:
         """Mark the link up and tell the entities."""
         self._link_up = True
+        # A reconnect task still waiting out its backoff can end now.
+        self._wake.set()
         self._notify_connection_state()
 
     @callback
@@ -641,8 +770,11 @@ class CasambiApi:
     @callback
     def _notify_connection_state(self) -> None:
         """Tell the entities that the connection was lost or re-established."""
-        for c in self._connection_callbacks:
-            c()
+        for c in list(self._connection_callbacks):
+            try:
+                c()
+            except Exception:
+                _LOGGER.exception("Error updating an entity for the connection")
 
     def register_switch_events(self, c: Callable[[SwitchEvent], None]) -> None:
         """Register a callback for switch (wall switch button) events."""
@@ -654,10 +786,34 @@ class CasambiApi:
 
     @callback
     def _unit_changed_handler(self, unit: Unit) -> None:
+        if self.unit_kind(unit) is UnitKind.SENSOR_PLATFORM:
+            state = unit.state
+            decoded = decode_platform_packet(state.raw_state if state else None)
+            if decoded is not None:
+                packet, value = decoded
+                self._platform_readings.setdefault(unit.uuid, {})[packet] = value
+        # The library swallows what a handler raises; one entity failing
+        # must not keep the others, and the weather watcher, from the push.
         for c in self._callback_map.get(unit.deviceId, ()):
-            c(unit)
+            try:
+                c(unit)
+            except Exception:
+                _LOGGER.exception("Error updating an entity of %s", unit.name)
+        self.run_late_callbacks(unit)
+
+    @callback
+    def run_late_callbacks(self, unit: Unit) -> None:
+        """Run the watchers that act on what the entities made of a unit.
+
+        Also run when a screen's estimated motion ends on its timer: the
+        screen sends nothing then, and the weather protection waits for it
+        to rest.
+        """
         for c in self._late_callback_map.get(unit.deviceId, ()):
-            c(unit)
+            try:
+                c(unit)
+            except Exception:
+                _LOGGER.exception("Error watching %s", unit.name)
 
     @callback
     def _switch_event_handler(self, event: SwitchEvent) -> None:
@@ -686,8 +842,13 @@ class CasambiApi:
         _change: bluetooth.BluetoothChange,
     ) -> None:
         # Only connectable advertisements match the registered callback.
-        if not self.available:
-            self._schedule_reconnect()
+        if self.available:
+            return
+        if self._reconnect_task is not None and not self._reconnect_task.done():
+            if self._wake_on_advertisement:
+                self._wake.set()
+            return
+        self._schedule_reconnect()
 
 
 class CasambiProxy:
@@ -715,20 +876,24 @@ class CasambiProxy:
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 result = await attr(*args, **kwargs)
-            except (
-                BluetoothError,
-                BluetoothDeviceNotFoundError,
-                ConnectionStateError,
-                ProtocolError,
-            ):
+            except Exception:
                 # A write can fail while the library still considers itself
                 # connected (a timeout, say); its reconnect would then return
                 # at once. Only act when it has given the connection up
                 # without running the disconnect callbacks: the link is down
                 # for the entities as much as after a reported disconnect.
+                # Whatever was raised: a proxy timeout inside the library's
+                # own reconnect comes through as a bare TimeoutError.
                 if not self._casa.connected:
-                    _LOGGER.info("The link is gone after a write failed")
-                    self._api._casa_disconnect()  # noqa: SLF001
+                    if self._api._link_up:  # noqa: SLF001
+                        _LOGGER.info("The link is gone after a write failed")
+                        self._api._casa_disconnect()  # noqa: SLF001
+                    else:
+                        self._api._schedule_reconnect()  # noqa: SLF001
+                elif not self._api.available:
+                    # The library reconnected inside the write, then the
+                    # send failed: the link itself is back.
+                    self._api._link_restored()  # noqa: SLF001
                 raise
             # The library reconnects on its own inside a write; the entities
             # need not wait for the reconnect task's next attempt to know.

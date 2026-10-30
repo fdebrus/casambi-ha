@@ -44,13 +44,11 @@ from homeassistant.helpers.restore_state import (
 )
 
 from . import CasambiApi, CasambiConfigEntry
-from .binary_sensor import PACKET_RAIN, RAIN_THRESHOLD
 from .classify import UnitKind, classify_unit
 from .const import (
     CASA_RAW_MAX,
     CONF_LOUVRE_AZIMUTH,
     CONF_RAIN_ENTITY,
-    CONF_TEMPERATURE_ENTITY,
     CONF_WIND_ENTITY,
     CONF_WIND_THRESHOLD,
     DEFAULT_LOUVRE_AZIMUTH,
@@ -66,8 +64,8 @@ from .entities import (
     CasambiUnitEntity,
     TypedEntityDescription,
 )
-from .readings import entity_reports_rain, entity_temperature_c, entity_wind_kmh
-from .sensor import PACKET_WIND
+from .platform_packets import PACKET_RAIN, PACKET_WIND
+from .readings import entity_reports_rain, entity_wind_kmh
 from .suntrack import LOUVRE_MAX_ANGLE, compute_louvre_angle, get_sun_position
 
 _LOGGER = logging.getLogger(__name__)
@@ -90,6 +88,9 @@ OFFSET_LIMIT: Final = 45.0
 # Re-arm the wind latch when the wind drops below this fraction of the
 # threshold.
 WIND_HYSTERESIS: Final = 0.8
+# A motor that keeps resting out of safety is sent back at doubling
+# intervals, up to WEATHER_RESECURE_INTERVAL * 2**RESECURE_BACKOFF_STEPS.
+RESECURE_BACKOFF_STEPS: Final = 5
 
 
 # The sensor platform's writable enable bits, in bit-offset order
@@ -337,10 +338,9 @@ class CasambiSunTrackingSwitch(CasambiLouvreAutomationSwitch):
         if not self._api.temp_control.get(unit.uuid, False):
             return 0.0
 
-        entity_id = entry_option(self._config_entry, CONF_TEMPERATURE_ENTITY, None)
-        if not entity_id:
-            return 0.0
-        temperature = entity_temperature_c(self.hass.states.get(entity_id))
+        # The last reading stands in while the source can't tell: dropping
+        # the bias for one reading swings the slats by up to 45°.
+        temperature = self._api.temperature_c()
         if temperature is None:
             return 0.0
 
@@ -538,6 +538,10 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         # When each motor was last sent to safety, to leave one that was
         # just moved alone until it has stopped and reported its position.
         self._secured_at: dict[str, float] = {}
+        # Re-securing a motor that does not get there (an obstacle, an
+        # overcurrent stop) backs off: uuid -> (attempts in a row without
+        # progress, raw position at the last attempt).
+        self._attempts: dict[str, tuple[int, int]] = {}
 
     async def async_added_to_hass(self) -> None:
         """Restore the setting and start listening to the weather sources."""
@@ -593,6 +597,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         self._entity_wind = None
         self._pending.clear()
         self._secured_at.clear()
+        self._attempts.clear()
         self.async_write_ha_state()
         self._api.notify_weather_lock()
 
@@ -612,16 +617,32 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         # wind entity no new reading would come to retry it.
         if reason is None or not self._api.available or not unit.online:
             return
-        if not self._api.unit_at_rest(unit):
+        raw = self._api.unit_rest_position(unit)
+        if raw is None:
+            # Still moving.
             return
-        retract = self._api.unit_kind(unit) is UnitKind.SCREEN
-        state = unit.state
-        raw = (state.dimmer if retract else state.slider) if state else None
-        if not raw:
+        if raw == 0:
+            self._attempts.pop(unit.uuid, None)
             return
+        attempts, last_raw = self._attempts.get(unit.uuid, (0, CASA_RAW_MAX + 1))
+        interval = WEATHER_RESECURE_INTERVAL * 2 ** min(
+            attempts, RESECURE_BACKOFF_STEPS
+        )
         last = self._secured_at.get(unit.uuid)
-        if last is not None and monotonic() - last < WEATHER_RESECURE_INTERVAL:
+        if last is not None and monotonic() - last < interval:
             return
+        # Count the attempts that got the motor nowhere.
+        attempts = attempts + 1 if raw >= last_raw else 0
+        self._attempts[unit.uuid] = (attempts, raw)
+        if attempts == RESECURE_BACKOFF_STEPS:
+            _LOGGER.warning(
+                "Weather protection: %s does not reach its safe position "
+                "(stays at %i); trying again every %d minutes",
+                unit.name,
+                raw,
+                WEATHER_RESECURE_INTERVAL * 2**RESECURE_BACKOFF_STEPS // 60,
+            )
+        retract = self._api.unit_kind(unit) is UnitKind.SCREEN
         _LOGGER.info(
             "Weather protection: %s was moved to %i while held by %s, %s it again",
             unit.name,
@@ -720,6 +741,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         if not readings:
             return
         wind_kmh = max(readings)
+        previous = self._api.wind_kmh
         self._api.wind_kmh = wind_kmh
         threshold = entry_option(
             self._config_entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
@@ -738,7 +760,11 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
             self._api.notify_weather_lock()
         elif wind_kmh < threshold * WIND_HYSTERESIS and self._api.wind_active:
             self._api.wind_active = False
+            self._attempts.clear()
             _LOGGER.info("Weather protection: wind dropped to %.1f km/h", wind_kmh)
+            self._api.notify_weather_lock()
+        elif self._api.wind_active and wind_kmh != previous:
+            # The covers show the wind that holds them.
             self._api.notify_weather_lock()
 
     @callback
@@ -769,6 +795,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
             self._api.notify_weather_lock()
         elif not raining and self._api.rain_active:
             self._api.rain_active = False
+            self._attempts.clear()
             _LOGGER.info("Weather protection: rain stopped")
             self._api.notify_weather_lock()
 
@@ -779,15 +806,13 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
             return
         self._reading += 1
 
-        cache = unit.sensor_cache
-
-        rain_raw = cache.get(PACKET_RAIN)
-        if rain_raw is not None:
-            self._platform_rain = rain_raw >= RAIN_THRESHOLD
+        rain = self._api.platform_reading(unit, PACKET_RAIN)
+        if rain is not None:
+            self._platform_rain = rain >= 1
             self._update_rain()
 
-        wind_raw = cache.get(PACKET_WIND)
-        if wind_raw is not None:
-            self._platform_wind = wind_raw / 4
+        wind = self._api.platform_reading(unit, PACKET_WIND)
+        if wind is not None:
+            self._platform_wind = float(wind)
             self._update_wind()
         self._retry_pending()

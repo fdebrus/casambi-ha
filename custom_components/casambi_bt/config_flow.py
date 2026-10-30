@@ -7,7 +7,12 @@ import logging
 from typing import Any
 
 from CasambiBt import Casambi
-from CasambiBt.errors import AuthenticationError, NetworkNotFoundError
+from CasambiBt.errors import (
+    AuthenticationError,
+    BluetoothDeviceNotFoundError,
+    NetworkNotFoundError,
+    ProtocolError,
+)
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -24,7 +29,7 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.httpx_client import get_async_client
 
-from . import get_cache_dir
+from . import LINK_ERRORS, cloud_outage, get_cache_dir
 from .const import (
     CONF_FROST_LOCK_TEMPERATURE,
     CONF_IMPORT_GROUPS,
@@ -99,11 +104,22 @@ async def _async_try_connect(
         return None, {"base": "invalid_address"}
     try:
         info = await _validate_input(hass, data)
-    except NetworkNotFoundError:
-        return None, {"base": "cannot_connect"}
-    except AuthenticationError:
-        return None, {"base": "invalid_auth"}
-    except Exception:  # pylint: disable=broad-except
+    except Exception as err:  # pylint: disable=broad-except
+        if cloud_outage(err) or isinstance(
+            err,
+            (
+                *LINK_ERRORS,
+                BluetoothDeviceNotFoundError,
+                NetworkNotFoundError,
+                ProtocolError,
+            ),
+        ):
+            # The network, the radio or the cloud failed: trying again
+            # later can work, and a cloud outage is no wrong password.
+            _LOGGER.debug("Could not connect to %s", data[CONF_ADDRESS], exc_info=True)
+            return None, {"base": "cannot_connect"}
+        if isinstance(err, AuthenticationError):
+            return None, {"base": "invalid_auth"}
         _LOGGER.exception("Unexpected exception")
         return None, {"base": "unknown"}
     return info, {}
@@ -212,23 +228,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Create the options flow."""
         return OptionsFlow(config_entry)
 
-    async def _async_create_casa_entry(
-        self, title: str, id: str, data: dict[str, Any]
-    ) -> ConfigFlowResult:
-        existing_entry = await self.async_set_unique_id(id)
-
-        if existing_entry:
-            if existing_entry.title == title and existing_entry.data == data:
-                return self.async_abort(reason="already_configured")
-            return self.async_update_reload_and_abort(
-                existing_entry,
-                title=title,
-                data=data,
-                reason="reauth_successful",
-            )
-
-        return self.async_create_entry(title=title, data=data)
-
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
@@ -271,11 +270,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input:
             user_input[CONF_ADDRESS] = format_mac(user_input[CONF_ADDRESS]).upper()
+            # Before connecting: validating would wipe a configured entry's
+            # network cache and open a second link next to its own. An
+            # ignored entry doesn't count and is replaced; a configured one
+            # is changed with reauth or reconfigure.
+            await self.async_set_unique_id(user_input[CONF_ADDRESS])
+            self._abort_if_unique_id_configured()
             info, errors = await _async_try_connect(self.hass, user_input)
             if info is not None:
-                return await self._async_create_casa_entry(
-                    info["title"], info["id"], user_input
-                )
+                return self.async_create_entry(title=info["title"], data=user_input)
 
             return self.async_show_form(
                 step_id="network",

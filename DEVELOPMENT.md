@@ -22,7 +22,16 @@ operation, not an error.
   bluetooth advertisement for a network we are not connected to, calls
   `_schedule_reconnect()`. It starts `CasambiApi.reconnect()` as a single
   background task and never starts a second one while it runs, so
-  simultaneous triggers cannot stack up connection attempts.
+  simultaneous triggers cannot stack up connection attempts. An
+  advertisement that arrives while the task waits out its backoff ends the
+  wait instead, but only when the last attempt found no device: Home
+  Assistant passes on just the first advertisement after the network
+  returns, which a five-minute sleep used to miss, while a network that is
+  seen but refuses the connection keeps its backoff. A write that brings
+  the link back ends the wait too.
+* **No reconnect at shutdown.** Home Assistant does not unload entries
+  when it stops, and the Bluetooth proxies drop their links as it does;
+  `EVENT_HOMEASSISTANT_STOP` sets `_closing` and cancels the task.
 * **Exponential backoff.** The task retries with a delay that starts at
   `RECONNECT_BACKOFF_START` (2 s) and doubles up to
   `RECONNECT_BACKOFF_MAX` (5 min). When Home Assistant reports the device
@@ -36,11 +45,21 @@ operation, not an error.
   a Home Assistant restart).
 * **A link lost mid-handshake is a bluetooth failure.** The library raises
   `ConnectionStateError`, not `BluetoothError`, when the link drops during
-  the key exchange; it is retried like one, at setup (`ConfigEntryNotReady`),
-  in the reconnect loop and in the proxy. Any other unexpected error keeps
-  the loop going at `RECONNECT_BACKOFF_MAX`, its traceback logged once:
-  with the task gone only an advertisement could start a new one, and
-  habluetooth does not pass on an advertisement identical to the last.
+  the key exchange, and bleak-esphome reports a GATT timeout through a
+  proxy as a bare `TimeoutError` that the library lets through
+  (`LINK_ERRORS`). Both are retried like bluetooth errors, at setup
+  (`ConfigEntryNotReady`), in the reconnect loop and in the proxy. Any
+  other unexpected error keeps the loop going at `RECONNECT_BACKOFF_MAX`,
+  its traceback logged once, and leaves setup retrying rather than failed
+  for good: with the task gone only an advertisement could start a new
+  one, and habluetooth does not pass on an advertisement identical to the
+  last.
+* **A cloud incident does not keep the pergola out.** The library only
+  carries on from its cache when the login cannot reach the cloud at all.
+  A bad answer to the login, the network id or the network update
+  (`cloud_outage()`) is retried once with `forceOffline=True`, which
+  connects from the cached network; a network the cloud says it doesn't
+  know is believed.
 * **Writes trigger reconnects.** Entities reach the library through
   `CasambiProxy`, which wraps every coroutine call: a `BluetoothError`
   (or `ConnectionStateError`) during a write with the library no longer reporting itself connected
@@ -49,7 +68,9 @@ operation, not an error.
   exactly as after a reported disconnect. A write that fails while the
   library still says connected (a timeout) is only reported: the
   library's reconnect would return at once, and a real drop follows
-  through the callbacks. The library also reconnects on its own inside a
+  through the callbacks. This holds for any exception the write raises,
+  and a failed write after which the library is connected again (it
+  reconnected inside the write) marks the link up. The library also reconnects on its own inside a
   write; a write that succeeds while the link is marked down therefore
   marks it up again without waiting for the reconnect task. Unlike
   upstream the error is re-raised, so the failed command is still
@@ -58,7 +79,10 @@ operation, not an error.
 * **Entities follow the connection.** `CasambiApi` fans out connection
   state changes to entities (`register_connection_updates`), so the
   **Status** binary sensor and every entity's availability update the
-  moment the link drops or comes back.
+  moment the link drops or comes back. The reconnect is scheduled before
+  the entities are told, and each callback, connection or unit, is guarded:
+  the library swallows what its handlers raise, so one failing entity used
+  to leave the network without a reconnect.
 * **Long outages are logged.** After `RECONNECT_WARN_AFTER` (5 min) of
   failed attempts a single warning names the last reason (*no Bluetooth
   adapter or proxy in range sees it*, or the Bluetooth error); a second
@@ -153,10 +177,17 @@ which this integration uses):
 | Winsol On-Off (relay, e.g. heating) | `EXT/Elements` | a single writable onoff (bit 0, 1-byte state) | Switch (writes the ONOFF bit both ways; the library's `turnOn` sends `SetLevel ff05`, which the relay ignores) |
 | Sensor Platform V4 (weather) | `EXT/Elements{Presence,Daylight}` | presence (bits 0–1), lux (bits 2–13), rotating wind/sun/PIR/rain (bits 14–33), 4 enable switches | Wind/solar/illuminance sensors, rain/motion/presence binary sensors |
 
-The rotating sensor packets are accumulated by the library in
-`unit.sensor_cache`, keyed by packet type: 0 = rain (1 dry, 5 raining),
-1 = wind (raw/4), 2 = solar (raw/4), 3 = PIR. Unit classification lives in
-`classify.py`.
+The rotating sensor packets are decoded by the integration
+(`platform_packets.py`) from the fixture layout: a 4-bit header at bits
+14–17 and a 16-bit value at bits 18–33, header 1 = wind (km/h), 2 = solar,
+3 = PIR, 4 = rain (0 dry, 1 raining). The library's `unit.sensor_cache`
+reads them from fixed bytes instead (type from bits 14–15, value from bits
+16–23), which is where the "wind raw/4" and "rain 1 dry, 5 raining" of the
+earlier notes came from, and wraps every reading at 64: a 70 km/h gust read
+6 km/h. Below 64 both give the same values. Unit classification lives in
+`classify.py`; a screen is an `EXT/1ch/Dim` unit with a dimmer, a sensor
+control (the travel times) and a writable start/stop bit, so a plain dimmer
+in that mode stays a light.
 
 ### Screen position is inverted — confirmed
 
@@ -471,13 +502,13 @@ temperature source entity is chosen in the integration options.
 platform exists or a rain or wind entity is set in the options, and there
 is a louvre or screen to protect). While on: rain closes all louvres and
 pauses sun tracking until dry. Rain is the OR of the sensor platform
-(packet 0 ≥ 2) and the rain entity (`entity_reports_rain`: binary sensor
+(packet 4 ≥ 1) and the rain entity (`entity_reports_rain`: binary sensor
 on, weather condition rainy/pouring/lightning-rainy/snowy-rainy/hail, any
 other numeric state above 0; unavailable/unknown/non-numeric keep the last
 reading); wind at or above the configured threshold
 (default 35 km/h) retracts all screens, closes all louvres and pauses sun
 tracking, latched with 80% hysteresis; screens are never re-extended
-automatically. Wind is the higher of the sensor platform (packet 1 / 4)
+automatically. Wind is the higher of the sensor platform (packet 1, km/h)
 and the wind entity (`entity_wind_kmh`, converted from its unit with
 `SpeedConverter`; no unit means km/h). It acts on the transitions when
 rain or wind starts, and then holds as a lock until they stop, exactly
@@ -497,10 +528,15 @@ undid the reset the link drop had made. The wall button and the app are
 not blocked; instead the switch listens to the motors' state pushes
 (`_motor_update`) and sends a motor that rests out of safety back, no
 more than once per `WEATHER_RESECURE_INTERVAL` (30 s) per motor, offline
-units aside. "At rest" comes from the cover through
-`CasambiApi.register_rest_check`: the bit is clear and, for a screen, its
-motion estimate has ended, because a screen ignores a position behind it
-while it moves (capture, below). The switch registers its watcher as a
+units aside; a motor that rests short of safety again (an obstacle, an
+overcurrent stop) is retried at doubling intervals up to 16 minutes, with
+one warning. Where it rests comes from the cover through
+`CasambiApi.register_rest_check`: None while the bit is set or, for a
+screen, while its motion estimate runs, because a screen ignores a
+position behind it while it moves (capture, below); then the cover's own
+position, since a screen's reported target can be stale after a button
+run. A screen arrives on its estimate without a push, so its timer runs
+the late callbacks when the motion ends. The switch registers its watcher as a
 late unit callback (`register_unit_updates(..., late=True)`), so it runs
 after the covers have seen the same push: the platforms are set up
 concurrently, and a watcher that ran first saw a screen that had just
@@ -518,7 +554,10 @@ past the integration's backoff.
 `CasambiApi.frost_lock_temperature(unit)` returns the reading while the
 lock is on and the temperature entity reads below
 `frost_lock_temperature` (default 2 °C), keeping the last numeric reading
-when the entity can't tell. The louvre cover then raises
+when the entity can't tell. That reading is kept current by a state
+listener on the entity (`CasambiApi.track_temperature`), not only read at
+each command, so a source that read -3 °C overnight and then dropped still
+locks; the temperature control uses the same reading. The louvre cover then raises
 `ServiceValidationError` (`frost_lock`) on open and on any position above
 the current one, and sun tracking skips its update; closing, stopping and
 weather protection are not affected. A louvre whose frost lock switch never

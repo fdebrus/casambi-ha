@@ -103,6 +103,7 @@ async def async_get_config_entry_diagnostics(
                 ],
                 "state": _state_details(unit.state),
                 "sensor_cache": dict(unit.sensor_cache),
+                "platform_readings": api.platform_readings(unit),
             }
             for unit in casa.units
         ],

@@ -260,7 +260,7 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
     async def async_added_to_hass(self) -> None:
         """Tell the weather protection how to see whether the motor rests."""
         await super().async_added_to_hass()
-        self._api.register_rest_check(self._obj, self._at_rest)
+        self._api.register_rest_check(self._obj, self._rest_position)
         self._api.register_lock_listener(self._write_state)
 
     async def async_will_remove_from_hass(self) -> None:
@@ -269,9 +269,16 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         self._api.unregister_lock_listener(self._write_state)
         await super().async_will_remove_from_hass()
 
-    def _at_rest(self) -> bool:
-        """Return True while the motor is not on a button-style run."""
-        return not self._toggle_running()
+    def _rest_position(self) -> int | None:
+        """Return the raw position the motor rests at, or None while it runs.
+
+        The weather protection sends a motor back from here: the cover's
+        own model, not the reported state, which for a screen is a target
+        that can be stale.
+        """
+        if self._toggle_running():
+            return None
+        return self._raw_position(self._obj)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -388,10 +395,18 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             self._rest_raw = raw
 
     def _toggle_direction(self) -> bool | None:
-        """Return whether setting the bit now raises the raw position."""
+        """Return whether setting the bit now raises the raw position.
+
+        The motor runs opposite its last run. At an end that is the only
+        way it can go, which is all that is known before any run was seen.
+        After a run the end says nothing: a double tap from the closed end
+        stops the run with the stale rest (still the end) and reverses it.
+        """
         position = self._rest_raw
         if position is None:
             return None
+        if self._ran_since_rest and self._last_raising is not None:
+            return not self._last_raising
         if position <= 0:
             return True
         if position >= CASA_RAW_MAX:
@@ -609,6 +624,9 @@ class CasambiScreenCover(CasambiMotorCover):
         # the screen stopped, not a new run; the stale one is ignored.
         self._settling = False
         self._stale_target: int | None = None
+        # The stop report follows the end of a run within a fraction of a
+        # second (171 ms in the captures); after this, a target is a move.
+        self._settle_until = 0.0
         super().__init__(api, unit)
         self._track_motion(unit)
         self._note_direction(unit)
@@ -640,6 +658,10 @@ class CasambiScreenCover(CasambiMotorCover):
             return False
         if self._estimate(monotonic()) == self._target:
             self._move_start = None
+            if not self._toggle_running():
+                # Arrived on the estimate, with no push to say so: this is
+                # where the bit starts the next run from.
+                self._rest_raw = self._target
             return False
         return True
 
@@ -697,12 +719,16 @@ class CasambiScreenCover(CasambiMotorCover):
                 self._target = round(estimate)
             self._move_start = None
             self._settling = True
+            self._settle_until = now + BIT_ECHO_SECONDS
             self._stale_target = state.dimmer
             return False
         if button_run:
             return False
 
         target = state.dimmer
+        if self._settling and now > self._settle_until:
+            # No stop report came: whatever is reported now is a move.
+            self._settling = False
         if self._settling:
             # Where the screen actually stopped. Not a run: it differs from
             # the estimate by the estimate's error, which says nothing
@@ -720,11 +746,18 @@ class CasambiScreenCover(CasambiMotorCover):
         return unit.state.dimmer if unit.state is not None else None
 
     def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
+        # A position sent now is what the screen reports next, not where a
+        # run that just ended stopped.
+        self._settling = False
         return self._api.casa.setLevel(self._obj, raw)
 
-    def _at_rest(self) -> bool:
-        """Return True while neither the bit nor the estimate has it moving."""
-        return super()._at_rest() and not self._moving()
+    def _rest_position(self) -> int | None:
+        """Return where the screen rests per its model, or None while moving."""
+        if self._toggle_running() or self._moving():
+            return None
+        if self._target is not None:
+            return self._target
+        return self._raw_position(self._obj)
 
     def _note_direction(self, unit: Unit) -> None:
         """Keep the rest position from the motion estimate.
@@ -778,7 +811,7 @@ class CasambiScreenCover(CasambiMotorCover):
             and self._moving()
             and self._target is not None
         ):
-            if (self._target > self._move_from) == (raw_end > self._move_from):
+            if (self._target > self._move_from) == (raw_end == CASA_RAW_MAX):
                 if self._target != raw_end:
                     await self._async_casa_command(self._send_position(raw_end))
                 return
@@ -792,6 +825,11 @@ class CasambiScreenCover(CasambiMotorCover):
         """Refresh the estimated position while the screen moves."""
         if not self._moving():
             self._stop_ticking()
+            self._write_state()
+            # The screen says nothing when it arrives; the weather
+            # protection waits for it to rest before sending it back.
+            self._api.run_late_callbacks(self._obj)
+            return
         self._write_state()
 
     def _ensure_ticking(self) -> None:
@@ -826,7 +864,7 @@ class CasambiScreenCover(CasambiMotorCover):
             return
         position = math.ceil(ahead) if extending else math.floor(ahead)
         position = min(max(position, 0), CASA_RAW_MAX)
-        await self._async_casa_command(self._api.casa.setLevel(self._obj, position))
+        await self._async_casa_command(self._send_position(position))
 
     async def async_will_remove_from_hass(self) -> None:
         """Stop refreshing when the entity is removed."""
@@ -871,4 +909,4 @@ class CasambiScreenCover(CasambiMotorCover):
         """Move the screen to a specific position (0-100)."""
         raw = round((100 - kwargs[ATTR_POSITION]) * CASA_RAW_MAX / 100)
         self._check_weather_lock(raw)
-        await self._async_casa_command(self._api.casa.setLevel(self._obj, raw))
+        await self._async_casa_command(self._send_position(raw))

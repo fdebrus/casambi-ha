@@ -68,8 +68,9 @@ def classify_unit(unit: Unit) -> UnitKind:
       (e.g. Winsol Lamel louvres: slider $pos 0-142° + onoff $startstop).
       A motor with more writable controls than that (e.g. the Winsol Lamel
       Intelligent) is an unsupported motor and gets no entities.
-    - EXT/1ch/Dim with only a dimmer is a motor-driven screen/blind whose
-      position is reported as the dimmer value (e.g. Winsol SO!).
+    - EXT/1ch/Dim with a dimmer, a sensor control (its travel times) and a
+      writable start/stop bit is a motor-driven screen whose position is
+      reported as the dimmer value (e.g. Winsol SO!).
     - An EXT/ unit whose only control is a writable ONOFF bit is a relay
       switching some external load (e.g. the Winsol On-Off driving the
       pergola heating). Ordinary on/off luminaires are not in EXT/ mode
@@ -95,7 +96,19 @@ def classify_unit(unit: Unit) -> UnitKind:
             return UnitKind.LOUVRE
         return UnitKind.UNSUPPORTED_MOTOR
 
-    if mode.startswith("EXT/1ch/Dim") and UnitControlType.DIMMER in ctypes:
+    if (
+        mode.startswith("EXT/1ch/Dim")
+        and UnitControlType.DIMMER in ctypes
+        and UnitControlType.SENSOR in ctypes
+        and any(
+            c.type == UnitControlType.ONOFF and not c.readonly
+            for c in unit.unitType.controls
+        )
+    ):
+        # The SO!'s signature: the dimmer is the position, the travel times
+        # come on a sensor control and the start/stop bit is writable. A
+        # plain dimmer in the same mode stays a light rather than becoming
+        # a cover that the weather protection would "retract" to level 0.
         return UnitKind.SCREEN
 
     if (

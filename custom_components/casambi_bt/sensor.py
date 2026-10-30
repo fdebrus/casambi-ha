@@ -1,14 +1,13 @@
 """Support for Casambi environment sensor platforms (e.g. Sensor Platform V4).
 
 EXT/Elements sensor platforms broadcast their readings as rotating state
-packets; the library accumulates the latest raw value per packet type in
-``unit.sensor_cache``. The packet semantics were reverse-engineered by the
-https://github.com/superkikim/casambi-bt-hass fork:
+packets, decoded by ``platform_packets`` (first reverse-engineered by the
+https://github.com/superkikim/casambi-bt-hass fork):
 
-- packet type 1: wind speed, raw / 4
-- packet type 2: solar radiation, raw / 4
-- packet type 0: rain (1 = dry, 5 = raining) - exposed as binary sensor
-- packet type 3: PIR presence - exposed as binary sensor
+- packet 1: wind speed (km/h)
+- packet 2: solar radiation
+- packet 4: rain (0 = dry, 1 = raining) - exposed as binary sensor
+- packet 3: PIR presence - exposed as binary sensor
 
 Additionally the platform reports lux (12 bit) and presence (2 bit) as
 first-class controls parsed into the unit state.
@@ -50,14 +49,13 @@ from .entities import (
     CasambiUnitEntity,
     TypedEntityDescription,
 )
+from .platform_packets import PACKET_SOLAR, PACKET_WIND
 
 _LOGGER = logging.getLogger(__name__)
 
 # State is pushed by the Casambi network, no coordinated polling is required.
 PARALLEL_UPDATES = 0
 
-PACKET_WIND: Final = 1
-PACKET_SOLAR: Final = 2
 
 # Louvre state layout: a 4-bit channel header followed by a 24-bit value.
 LOUVRE_HEADER_BITS: Final = 4
@@ -97,6 +95,24 @@ LOUVRE_CHANNELS: Final[dict[int, LouvreChannel]] = {
     ),
     4: LouvreChannel(key="louvre_module_state"),
 }
+
+
+# A louvre motor's own temperature: outside this range a reading is not
+# a temperature but an encoding the captures haven't shown yet.
+LOUVRE_TEMPERATURE_RANGE: Final = (-40, 85)
+
+
+def louvre_temperature(value: int) -> int | None:
+    """Return the °C a louvre's 24-bit temperature channel carries.
+
+    Only readings above 0 °C have been captured. Below zero the value is
+    read as two's complement; anything else implausible is dropped rather
+    than recorded (and taken by the frost lock) as hundreds of degrees.
+    """
+    if value & 1 << (LOUVRE_VALUE_BITS - 1):
+        value -= 1 << LOUVRE_VALUE_BITS
+    low, high = LOUVRE_TEMPERATURE_RANGE
+    return value if low <= value <= high else None
 
 
 def decode_louvre_channel(raw: bytes | None) -> tuple[int, int] | None:
@@ -177,7 +193,11 @@ class CasambiLouvreChannelSensor(CasambiUnitEntity, SensorEntity):
         """Pick up the value if the pushed state carries this channel."""
         state = unit.state
         decoded = decode_louvre_channel(state.raw_state if state else None)
-        if decoded is not None and decoded[0] == self._channel:
+        if decoded is None or decoded[0] != self._channel:
+            return
+        if self._attr_device_class is SensorDeviceClass.TEMPERATURE:
+            self._value = louvre_temperature(decoded[1])
+        else:
             self._value = decoded[1]
 
     def _snapshot(self) -> object:
@@ -195,7 +215,6 @@ class CasambiPacketSensor(CasambiBroadcastUnitEntity, SensorEntity):
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _packet_type: int
-    _divisor: float = 1.0
 
     def __init__(self, api: CasambiApi, unit: Unit, entity_type: str) -> None:
         """Initialize an environment sensor entity."""
@@ -211,12 +230,9 @@ class CasambiPacketSensor(CasambiBroadcastUnitEntity, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the latest accumulated reading."""
-        unit = self._obj
-        raw = unit.sensor_cache.get(self._packet_type)
-        if raw is None:
-            return None
-        return raw / self._divisor
+        """Return the latest reading of this packet."""
+        value = self._api.platform_reading(self._obj, self._packet_type)
+        return None if value is None else float(value)
 
 
 class CasambiWindSensor(CasambiPacketSensor):
@@ -225,7 +241,6 @@ class CasambiWindSensor(CasambiPacketSensor):
     _attr_device_class = SensorDeviceClass.WIND_SPEED
     _attr_native_unit_of_measurement = UnitOfSpeed.KILOMETERS_PER_HOUR
     _packet_type = PACKET_WIND
-    _divisor = 4.0
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a wind speed sensor entity."""
@@ -236,7 +251,6 @@ class CasambiSolarSensor(CasambiPacketSensor):
     """The solar radiation reading of a Casambi sensor platform."""
 
     _packet_type = PACKET_SOLAR
-    _divisor = 4.0
 
     def __init__(self, api: CasambiApi, unit: Unit) -> None:
         """Initialize a solar radiation sensor entity."""
