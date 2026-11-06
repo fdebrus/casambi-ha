@@ -338,6 +338,24 @@ a SetSlider reversed them (18:24:42 target 0 -> 255, 18:25:21 target
 started from Home Assistant is left alone until their travel time is
 known for an aim-ahead stop.
 
+The louvres' slider is a target as well. A position from the app is
+reported at once (dragging the slider in the app reports every value it
+passes, 242 down to 0 within 1.7 s), and 1–5 s into a bit run the slider
+jumps to the end the run heads for. A run stopped on the way repeats that
+end with the bit clear, then reports where the louvres stopped about 2 s
+later (13:28:42.5 stop, 13:28:44.5 raw 118 after 10.3 s from closed); a
+run left to finish has the bit cleared by the motor at the end (21.9 s
+for a full close on the wall button). `CasambiLouvreCover` therefore
+shows an estimate from `LOUVRE_TRAVEL_SECONDS` (22 s for 0–255, both
+ways), with opening/closing, while they move: from the bit run's start
+(the direction the model predicts), from a slider change at rest, or from
+a run Home Assistant starts. After a stop it holds the estimate for up to
+`LOUVRE_STOP_REPORT_SECONDS` (5 s) until the motor reports, unless the
+run was within `LOUVRE_END_MARGIN` of its end. `_note_direction` returns
+what each push was (`MotorStep`) for this. The reported slider stays what
+the weather protection, the frost lock and sun tracking work on. A long
+press on the wall button does nothing to the louvres.
+
 A run Home Assistant does not see — while it is disconnected or
 restarting — leaves the reported target stale: after a wall-button run to
 the end the unit can keep reporting the old target with the bit clear, so
@@ -450,11 +468,28 @@ Captured on unit 4 (button index = opcode − 0x40, payload[1] repeats it;
 ```
 
 `switch_decoder.py` subclasses the library decoder and swaps it into
-`CasambiBt._client` at import: 0x12 presses and releases are accepted from
-units that have never been seen on 0x06, and units that use 0x06 keep the
-library behaviour. Pressing the buttons did not move any motor, so on this
-pack they are free for Home Assistant automations. The override can go once
-the library handles input-only units itself.
+`CasambiBt._client` at import: the 0x12 stream of units that have never
+been seen on 0x06 is decoded there in full, and units that use 0x06 keep
+the library behaviour. On this pack button 1 runs the louvres like their
+own button and the others the screens; their events still reach Home
+Assistant. The override can go once the library handles input-only units
+itself.
+
+The mesh relays frames late and loses some (one press per button,
+2026-11-06):
+
+* A button 2 release came twice, 1.35 s apart, with the same origin; its
+  `age` read 0x08, then 0x8f (10 ms steps: 1.35 s). The library drops a
+  copy only within 0.5 s, so it was reported twice. A new action always
+  gets a new origin, so the decoder drops copies for
+  `DEDUP_WINDOW_SECONDS` (5 s) instead, through `_is_retransmit`, which
+  the library calls for its own streams too.
+* A long press on button 4 came as press then release after hold, its hold
+  lost. A release after hold with no hold since the press gets the hold
+  added in front of it, and a hold arriving after its release after hold
+  is dropped.
+* Copies relayed late also arrive out of order: a button 4 release came
+  1.75 s late, after the events of button 3.
 
 The module's fixture (39267, LEDsGO, mode `PushButton`) declares four push
 buttons, a single read-only 8-bit `pushButtonState` control and **no

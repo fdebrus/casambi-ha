@@ -8,7 +8,7 @@ from datetime import timedelta
 import logging
 import math
 from time import monotonic
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from CasambiBt import Group, Unit, UnitControlType
 
@@ -58,6 +58,17 @@ DEFAULT_TRAVEL_MS: Final = 35000
 # latency; 1.5 s is about 4 % of a 35 s travel).
 STOP_AHEAD_SECONDS: Final = 1.5
 
+# Winsol Lamel louvres: full travel (0-142 degrees) in either direction,
+# timed on the wall button (21.9 s closing; 10.3 s of opening stopped at
+# raw 118, 10.2 s predicted). The motor reports no travel time itself.
+LOUVRE_TRAVEL_SECONDS: Final = 22.0
+# After a stop in the middle of a run the louvres report where they stopped
+# within this long (2 s in the captures); until then the estimate shows.
+LOUVRE_STOP_REPORT_SECONDS: Final = 5.0
+# A run stopped this close (raw) to its end is taken as arrived: the motor
+# clears the bit itself at the end, with nothing more to report.
+LOUVRE_END_MARGIN: Final = 26
+
 # A moving screen ignores a target behind it. Margin (raw) on the estimate
 # for what counts as behind: 52 reported against an estimated 51.7 was
 # ignored, 65 against 64.1 was honoured (SO! V4.1 captures).
@@ -71,6 +82,9 @@ MOTION_UPDATE_INTERVAL: Final = timedelta(seconds=1)
 # Those echoes carry nothing the integration doesn't already know; a push
 # after them, or after this, is the motor's own news (the wall button).
 BIT_ECHO_SECONDS: Final = 3.0
+
+# What a state push meant to the motor model (see _note_direction).
+type MotorStep = Literal["echo", "run", "stop", "report", "move"] | None
 
 
 async def async_setup_entry(
@@ -255,6 +269,8 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         # wall button stopping the run.
         self._echoes: list[bool] = []
         self._echo_until = 0.0
+        # The timer refreshing an estimated position while the motor moves.
+        self._cancel_tick: Callable[[], None] | None = None
         self._note_direction(unit)
 
     @abstractmethod
@@ -272,7 +288,8 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         self._api.register_lock_listener(self._write_state)
 
     async def async_will_remove_from_hass(self) -> None:
-        """Withdraw the rest check."""
+        """Withdraw the rest check and stop refreshing."""
+        self._stop_ticking()
         self._api.unregister_rest_check(self._obj)
         self._api.unregister_lock_listener(self._write_state)
         await super().async_will_remove_from_hass()
@@ -381,7 +398,7 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         # Show the run now rather than at the motor's echo.
         self._write_state()
 
-    def _note_direction(self, unit: Unit) -> None:
+    def _note_direction(self, unit: Unit) -> MotorStep:
         """Follow the direction of runs and the rest position.
 
         A bit run is known by its direction when it starts. A position
@@ -391,31 +408,57 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         the stale rest position, then reports where it actually stopped;
         that step is only read as a move when the run's direction is
         unknown, since after a reversal it would point the wrong way.
+
+        Returns what the push was: Home Assistant's own write coming back
+        ("echo"), a run starting ("run") or stopping ("stop"), where the
+        motor stopped after a run ("report"), a position-driven move
+        ("move"), or nothing new (None).
         """
         running = self._toggle_running(unit)
         raw = self._raw_position(unit)
         if self._echo(running):
             # Home Assistant's own write coming back: known already, and
             # the clear before a reversal is not a rest.
-            return
+            return "echo"
+        step: MotorStep = None
         if running and not self._was_running:
             predicted = self._toggle_direction()
             if predicted is not None:
                 self._last_raising = predicted
             self._ran_since_rest = True
+            step = "run"
+        elif not running and self._was_running:
+            step = "stop"
         elif (
             not running
-            and not self._was_running
             and raw is not None
             and self._rest_raw is not None
             and raw != self._rest_raw
         ):
+            step = "report" if self._ran_since_rest else "move"
             if not self._ran_since_rest or self._last_raising is None:
                 self._last_raising = raw > self._rest_raw
             self._ran_since_rest = False
         self._was_running = running
         if not running and raw is not None:
             self._rest_raw = raw
+        return step
+
+    def _ensure_ticking(self) -> None:
+        if self._cancel_tick is None and self.hass is not None:
+            self._cancel_tick = async_track_time_interval(
+                self.hass, self._tick, MOTION_UPDATE_INTERVAL
+            )
+
+    def _stop_ticking(self) -> None:
+        if self._cancel_tick is not None:
+            self._cancel_tick()
+            self._cancel_tick = None
+
+    @callback
+    def _tick(self, _now: Any) -> None:
+        """Refresh the estimated position while the motor moves."""
+        self._stop_ticking()
 
     def _toggle_direction(self) -> bool | None:
         """Return whether setting the bit now raises the raw position.
@@ -535,7 +578,29 @@ class CasambiLouvreCover(CasambiMotorCover):
     E.g. the Winsol Lamel: the slider is the louvre angle, 0-142 degrees
     reported by the motor on the 8-bit scale 0-255 (fully open reads 255 in
     the captures).
+
+    Like the screen, the slider is where the louvres head, not where they
+    are: a position from the app is reported at once, and a few seconds
+    into a run started with the bit the slider jumps to the end it runs to.
+    A run stopped on the way first repeats that end, then reports where the
+    louvres stopped (2 s later in the captures); at an end the motor clears
+    the bit itself. The position shown is therefore estimated from the
+    travel time (LOUVRE_TRAVEL_SECONDS) while they move, and held after a
+    stop until the motor reports. The reported slider stays what the weather
+    protection, the frost lock and sun tracking work on.
     """
+
+    def __init__(self, api: CasambiApi, unit: Unit) -> None:
+        """Initialize a louvre cover entity."""
+        # Before the base class, whose __init__ already follows the run.
+        # The motion shown: (raw start, raw end, when it set off).
+        self._motion: tuple[float, int, float] | None = None
+        # The estimate held after a stop, until the motor reports.
+        self._held: float | None = None
+        self._held_until = 0.0
+        # The slider of the last push, the position before the current one.
+        self._slider: int | None = None
+        super().__init__(api, unit)
 
     def _raw_position(self, unit: Unit) -> int | None:
         return unit.state.slider if unit.state is not None else None
@@ -543,23 +608,128 @@ class CasambiLouvreCover(CasambiMotorCover):
     def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
         return self._api.casa.setSlider(self._obj, raw)
 
-    @property
-    def current_cover_position(self) -> int | None:
-        """Return the louvre position (0-100)."""
-        unit = self._obj
-        if unit.state is not None and unit.state.slider is not None:
-            return round(unit.state.slider * 100 / CASA_RAW_MAX)
+    def _shown(self, now: float) -> float | None:
+        """Return the raw position shown: estimated, held or reported."""
+        if self._motion is not None:
+            start, end, since = self._motion
+            travelled = (now - since) * CASA_RAW_MAX / LOUVRE_TRAVEL_SECONDS
+            if travelled < abs(end - start):
+                return start + (travelled if end > start else -travelled)
+            if self._toggle_running():
+                # On the estimate, the end: the bit clears when it gets there.
+                return float(end)
+            self._motion = None
+        if self._held is not None:
+            if now < self._held_until:
+                return self._held
+            self._held = None
+        return None if self._slider is None else float(self._slider)
+
+    def _start_motion(self, start: float | None, end: int | None, now: float) -> None:
+        """Show a motion from ``start`` to ``end``, if both are known."""
+        self._held = None
+        if start is None or end is None or start == end:
+            self._motion = None
+            return
+        self._motion = (start, end, now)
+        self._ensure_ticking()
+
+    def _note_direction(self, unit: Unit) -> MotorStep:
+        """Follow the run, and the motion shown for it."""
+        now = monotonic()
+        before = self._shown(now)
+        step = super()._note_direction(unit)
+        if step == "run":
+            # Started like the wall button, which way the model predicts.
+            end = None if self._last_raising is None else self._end(self._last_raising)
+            self._start_motion(before, end, now)
+        elif step == "stop":
+            self._stopped(before, now)
+        elif step == "report":
+            # Where the louvres actually stopped.
+            self._motion = None
+            self._held = None
+        elif step == "move":
+            self._start_motion(before, self._raw_position(unit), now)
+        if step != "echo":
+            self._slider = self._raw_position(unit)
+        return step
+
+    def _end(self, raising: bool) -> int:
+        return CASA_RAW_MAX if raising else 0
+
+    def _stopped(self, position: float | None, now: float) -> None:
+        """Hold the estimate where a run stopped until the motor reports."""
+        if self._motion is None:
+            return
+        end = self._motion[1]
+        self._motion = None
+        if position is None or abs(position - end) <= LOUVRE_END_MARGIN:
+            # Arrived, or as good as: the motor has nothing more to say.
+            self._held = None
+            return
+        self._held = position
+        self._held_until = now + LOUVRE_STOP_REPORT_SECONDS
+        self._ensure_ticking()
+
+    def _bit_run_started(
+        self, raising: bool, raw_end: int, echoes: tuple[bool, ...] = (True,)
+    ) -> None:
+        """Show the run Home Assistant set off from where the louvres are."""
+        now = monotonic()
+        self._start_motion(self._shown(now), raw_end, now)
+        super()._bit_run_started(raising, raw_end, echoes)
+
+    async def async_stop_cover(self, **kwargs: Any) -> None:
+        """Stop a run, holding the estimate where it was stopped."""
+        if self._toggle_control is not None and self._toggle_running():
+            now = monotonic()
+            self._stopped(self._shown(now), now)
+        await super().async_stop_cover(**kwargs)
+
+    @callback
+    def _connection_callback(self) -> None:
+        """Forget the motion when the link drops."""
+        if not self._api.available:
+            self._motion = None
+            self._held = None
+            self._stop_ticking()
+        super()._connection_callback()
+
+    @callback
+    def _tick(self, _now: Any) -> None:
+        """Refresh the estimate; stop once nothing is estimated any more."""
+        self._shown(monotonic())
+        if self._motion is None and self._held is None:
+            self._stop_ticking()
+        self._write_state()
+
+    def _way(self) -> bool | None:
+        """Return whether the louvres open (True), close (False) or rest."""
+        if self._toggle_running():
+            return self._last_raising
+        self._shown(monotonic())
+        if self._motion is not None:
+            return self._motion[1] > self._motion[0]
         return None
 
     @property
+    def current_cover_position(self) -> int | None:
+        """Return the louvre position (0-100), estimated while they move."""
+        shown = self._shown(monotonic())
+        if shown is None:
+            return None
+        return round(shown * 100 / CASA_RAW_MAX)
+
+    @property
     def is_opening(self) -> bool:
-        """Return True while the louvres open on a button-style run."""
-        return self._toggle_running() and self._last_raising is True
+        """Return True while the louvres open."""
+        return self._way() is True
 
     @property
     def is_closing(self) -> bool:
-        """Return True while the louvres close on a button-style run."""
-        return self._toggle_running() and self._last_raising is False
+        """Return True while the louvres close."""
+        return self._way() is False
 
     def _check_frost_lock(self) -> None:
         """Refuse to open louvres that may be frozen to their seals.
@@ -641,7 +811,6 @@ class CasambiScreenCover(CasambiMotorCover):
         self._target: int | None = None
         self._move_from = 0.0
         self._move_start: float | None = None
-        self._cancel_tick: Callable[[], None] | None = None
         self._button_run = False
         # After a button-style run ends, the next reported target is where
         # the screen stopped, not a new run; the stale one is ignored.
@@ -802,15 +971,16 @@ class CasambiScreenCover(CasambiMotorCover):
             return self._target
         return self._raw_position(self._obj)
 
-    def _note_direction(self, unit: Unit) -> None:
+    def _note_direction(self, unit: Unit) -> MotorStep:
         """Keep the rest position from the motion estimate.
 
         The screen tracks its runs itself (``_track_motion``), which also
         sets the direction of the last one.
         """
         if self._toggle_running(unit) or self._moving():
-            return
+            return None
         self._rest_raw = self._target
+        return None
 
     @callback
     def _change_callback(self, unit: Unit) -> None:
@@ -878,17 +1048,6 @@ class CasambiScreenCover(CasambiMotorCover):
             return
         self._write_state()
 
-    def _ensure_ticking(self) -> None:
-        if self._cancel_tick is None:
-            self._cancel_tick = async_track_time_interval(
-                self.hass, self._tick, MOTION_UPDATE_INTERVAL
-            )
-
-    def _stop_ticking(self) -> None:
-        if self._cancel_tick is not None:
-            self._cancel_tick()
-            self._cancel_tick = None
-
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the screen.
 
@@ -918,8 +1077,7 @@ class CasambiScreenCover(CasambiMotorCover):
         self._api.register_retract_handler(self._obj, self._async_retract)
 
     async def async_will_remove_from_hass(self) -> None:
-        """Stop refreshing when the entity is removed."""
-        self._stop_ticking()
+        """Withdraw the retract handler."""
         self._api.unregister_retract_handler(self._obj)
         await super().async_will_remove_from_hass()
 

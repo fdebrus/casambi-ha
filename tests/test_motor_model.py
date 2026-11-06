@@ -367,3 +367,152 @@ async def test_screen_honours_a_target_ahead_of_it(
         state = hass.states.get(entity_id)
         assert state.state == "open"
         assert state.attributes["current_position"] == 75
+
+
+# Lamel states: slider (raw, bits 28-35) and start/stop bit 36.
+LOUVRE_CLOSED = "4101000000"
+LOUVRE_RUN_FROM_CLOSED = "4101000010"  # bit set, slider still 0
+LOUVRE_RUN_TO_OPEN = "410100f01f"  # bit set, slider jumped to the end
+LOUVRE_OPEN = "410100f00f"
+LOUVRE_AT_118 = "4101006007"
+
+
+async def test_louvre_button_run_is_estimated_until_the_stop_report(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a button run stopped half way, as captured on the Lamel.
+
+    The slider jumps to the end a second into the run, so the louvres
+    showed fully open while still opening, and after the stop until the
+    motor reported where they were.
+    """
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, LOUVRE_CLOSED)
+        await rig.tick(100)
+        await rig.report(louvre, LOUVRE_RUN_FROM_CLOSED)
+        await rig.tick(1.3)
+        await rig.report(louvre, LOUVRE_RUN_TO_OPEN)
+        state = hass.states.get(entity_id)
+        assert state.state == "opening"
+        assert state.attributes["current_position"] == 6
+
+        await rig.tick(3.7)
+        assert hass.states.get(entity_id).attributes["current_position"] == 23
+
+        # Stopped 10.3 s in: the end is repeated, the estimate holds.
+        await rig.tick(5.3)
+        await rig.report(louvre, LOUVRE_OPEN)
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes["current_position"] == 47
+
+        await rig.tick(2)
+        await rig.report(louvre, LOUVRE_AT_118)
+        assert hass.states.get(entity_id).attributes["current_position"] == 46
+
+
+async def test_louvre_button_run_to_the_end(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a button run the motor ends itself, 21.9 s for a full close."""
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, LOUVRE_OPEN)
+        await rig.tick(100)
+        await rig.report(louvre, LOUVRE_RUN_TO_OPEN)  # bit set, slider 255
+        await rig.tick(1.8)
+        await rig.report(louvre, LOUVRE_RUN_FROM_CLOSED)  # slider jumps to 0
+        state = hass.states.get(entity_id)
+        assert state.state == "closing"
+        assert state.attributes["current_position"] == 92
+
+        await rig.tick(20.1)
+        await rig.report(louvre, LOUVRE_CLOSED)
+        state = hass.states.get(entity_id)
+        assert state.state == "closed"
+        assert state.attributes["current_position"] == 0
+
+
+async def test_louvre_position_from_the_app_is_estimated(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a position sent from the app: shown moving, not there at once."""
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, LOUVRE_CLOSED)
+        await rig.tick(100)
+        await rig.report(louvre, LOUVRE_AT_118)
+        state = hass.states.get(entity_id)
+        assert state.state == "opening"
+        assert state.attributes["current_position"] == 0
+
+        await rig.tick(5)
+        assert hass.states.get(entity_id).attributes["current_position"] == 23
+
+        # 118 of 255 takes 10.2 s.
+        await rig.tick(6)
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes["current_position"] == 46
+
+
+async def test_louvre_stop_from_ha_holds_the_estimate(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test stop during a close started from Home Assistant."""
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, LOUVRE_OPEN)
+        await rig.tick(100)
+        await rig.call(SERVICE_CLOSE_COVER, entity_id)
+        await rig.tick(0.5)
+        await rig.report(louvre, LOUVRE_RUN_TO_OPEN)  # the echo
+        await rig.tick(4.5)
+        await rig.call("stop_cover", entity_id)
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes["current_position"] == 77
+
+        await rig.tick(0.5)
+        await rig.report(louvre, LOUVRE_OPEN)  # the stop, stale end
+        assert hass.states.get(entity_id).attributes["current_position"] == 77
+        await rig.tick(1.5)
+        await rig.report(louvre, "4101009009")  # stopped at 153
+        assert hass.states.get(entity_id).attributes["current_position"] == 60

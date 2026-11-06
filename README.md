@@ -78,6 +78,7 @@ Units are classified by their control layout (`classify.py`): motors become cove
 
 - **Like the wall button.** Winsol motors have the start/stop bit the wall button toggles: setting it runs the motor opposite its last run, clearing it stops it at once. *Open* and *close* use that bit whenever it sends the motor the requested way, so *stop* is instant. Otherwise they send a position; a screen moving that way is stopped with a target about 1.5 s ahead of it, louvres are left to finish. *Set position* always sends a position.
 - **Screens are inverted.** Casambi counts how far a screen is *extended*; Home Assistant counts how far it is *open*. Open retracts the screen, close extends it.
+- **Louvre position is estimated too.** The louvres also report where they head, not where they are: HA shows *opening*/*closing* with a position estimated from their 22 s travel, and after a stop keeps the estimate until the louvres report where they stopped.
 - **Screen position is estimated.** A screen reports its target, not where it is. While it moves (from HA, the app or the button) HA shows *opening*/*closing* with a position estimated from its 35 s travel time, refreshed every second. A position sent from the app behind a moving screen is ignored by the screen, and by HA too.
 - **The wall button is seen right away.** A button press stopping a run HA has just started shows as a stop, even within the first seconds.
 
@@ -116,7 +117,7 @@ actions:
       entity_id: cover.winsol_louvres
 ```
 
-Wired button modules only report on the input stream; some release frames get lost in the mesh.
+Wired button modules only report on the input stream. The mesh relays some frames late (dropped when they repeat one seen in the last 5 s) and loses others: a `release_after_hold` with no `hold` before it gets the lost `hold` back.
 
 ## Connection
 

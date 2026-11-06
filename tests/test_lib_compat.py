@@ -240,6 +240,15 @@ def test_switch_decoder_internals() -> None:
     decoder = SwitchEventDecoder()
     assert isinstance(decoder._seen_origins, dict)  # noqa: SLF001
     assert callable(decoder._is_retransmit)  # noqa: SLF001
+    # The library calls it (with these arguments) for its own streams; the
+    # subclass widens the window through it.
+    assert list(inspect.signature(SwitchEventDecoder._is_retransmit).parameters) == [  # noqa: SLF001
+        "self",
+        "unit_id",
+        "button_index",
+        "origin",
+    ]
+    assert callable(decoder.reset)
 
     (frame,) = parse_invocation_stream(bytes.fromhex("10024004b4041200030100"))
     assert (frame.opcode, frame.origin, frame.target) == (0x40, 0x04B4, 0x0412)
