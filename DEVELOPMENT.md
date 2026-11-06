@@ -334,9 +334,15 @@ the default until seen), reports opening or closing meanwhile, and
 refreshes once a second until the estimate arrives. The louvres' onoff
 bit (`$startstop`) behaves the same way: setting it while they moved after
 a SetSlider reversed them (18:24:42 target 0 -> 255, 18:25:21 target
-255 -> 0). Their stop therefore only clears the bit of a button run; a run
-started from Home Assistant is left alone until their travel time is
-known for an aim-ahead stop.
+255 -> 0). Unlike the screen, moving louvres honour a new position ahead
+of them (70° sent from the app during a close from 142° stopped them
+there) and behind them too (21:28:13 target 233 from closed, 21:28:21
+target 0 at an estimated raw 87: they went back to closed), so the weather
+protection's slider 0 also takes on louvres that are opening. Their stop
+clears the bit of a button run; a move to a position is stopped with the
+estimated position `LOUVRE_STOP_AHEAD_SECONDS` (1 s, about 6°) ahead in
+the direction of travel, rounded further along, and nothing is sent at
+rest or within that margin of the target.
 
 The louvres' slider is a target as well. A position from the app is
 reported at once (dragging the slider in the app reports every value it

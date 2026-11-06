@@ -68,6 +68,12 @@ LOUVRE_STOP_REPORT_SECONDS: Final = 5.0
 # A run stopped this close (raw) to its end is taken as arrived: the motor
 # clears the bit itself at the end, with nothing more to report.
 LOUVRE_END_MARGIN: Final = 26
+# Moving louvres honour a new position, ahead of them (70 degrees sent
+# during a close from 142 stopped them there) or behind (0 sent half way
+# through an opening took them back), so stop sends the estimate this far
+# ahead in the direction of travel: the command latency plus the
+# estimate's error, 1 s is about 6 degrees.
+LOUVRE_STOP_AHEAD_SECONDS: Final = 1.0
 
 # A moving screen ignores a target behind it. Margin (raw) on the estimate
 # for what counts as behind: 52 reported against an estimated 51.7 was
@@ -608,13 +614,23 @@ class CasambiLouvreCover(CasambiMotorCover):
     def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
         return self._api.casa.setSlider(self._obj, raw)
 
+    def _estimate(self, now: float) -> float | None:
+        """Return where the motion shown has the louvres at ``now``, if moving."""
+        if self._motion is None:
+            return None
+        start, end, since = self._motion
+        travelled = (now - since) * CASA_RAW_MAX / LOUVRE_TRAVEL_SECONDS
+        if travelled < abs(end - start):
+            return start + (travelled if end > start else -travelled)
+        return None
+
     def _shown(self, now: float) -> float | None:
         """Return the raw position shown: estimated, held or reported."""
         if self._motion is not None:
-            start, end, since = self._motion
-            travelled = (now - since) * CASA_RAW_MAX / LOUVRE_TRAVEL_SECONDS
-            if travelled < abs(end - start):
-                return start + (travelled if end > start else -travelled)
+            estimate = self._estimate(now)
+            if estimate is not None:
+                return estimate
+            end = self._motion[1]
             if self._toggle_running():
                 # On the estimate, the end: the bit clears when it gets there.
                 return float(end)
@@ -681,11 +697,30 @@ class CasambiLouvreCover(CasambiMotorCover):
         super()._bit_run_started(raising, raw_end, echoes)
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
-        """Stop a run, holding the estimate where it was stopped."""
+        """Stop the louvres.
+
+        A run started like the wall button is stopped by clearing the bit,
+        holding the estimate where it was stopped. A move to a position (the
+        app, sun tracking, a position from Home Assistant) is stopped with a
+        position just ahead of the louvres, since setting the bit then would
+        reverse them. Nothing is sent at rest or when they would get there
+        within that margin anyway.
+        """
+        now = monotonic()
         if self._toggle_control is not None and self._toggle_running():
-            now = monotonic()
             self._stopped(self._shown(now), now)
-        await super().async_stop_cover(**kwargs)
+            await super().async_stop_cover(**kwargs)
+            return
+        self._shown(now)
+        if self._motion is None:
+            return
+        opening = self._motion[1] > self._motion[0]
+        ahead = self._estimate(now + LOUVRE_STOP_AHEAD_SECONDS)
+        if ahead is None:
+            return
+        position = math.ceil(ahead) if opening else math.floor(ahead)
+        position = min(max(position, 0), CASA_RAW_MAX)
+        await self._async_casa_command(self._send_position(position))
 
     @callback
     def _connection_callback(self) -> None:
