@@ -68,10 +68,11 @@ LOUVRE_STOP_REPORT_SECONDS: Final = 5.0
 # A run stopped this close (raw) to its end is taken as arrived: the motor
 # clears the bit itself at the end, with nothing more to report.
 LOUVRE_END_MARGIN: Final = 26
-# Moving louvres honour a new position (70 degrees sent during a close from
-# 142 stopped them there), so stop sends the estimate this far ahead in
-# the direction of travel: the command latency plus the estimate's error,
-# 1 s is about 6 degrees.
+# Moving louvres honour a new position, ahead of them (70 degrees sent
+# during a close from 142 stopped them there) or behind (0 sent half way
+# through an opening took them back), so stop sends the estimate this far
+# ahead in the direction of travel: the command latency plus the
+# estimate's error, 1 s is about 6 degrees.
 LOUVRE_STOP_AHEAD_SECONDS: Final = 1.0
 
 # A moving screen ignores a target behind it. Margin (raw) on the estimate
