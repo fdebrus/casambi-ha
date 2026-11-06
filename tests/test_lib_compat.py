@@ -125,6 +125,18 @@ def test_casambi_members(name: str) -> None:
     assert _has_member(Casambi, name), f"Casambi.{name} is gone from the library"
 
 
+def test_stale_link_internals() -> None:
+    """Test the internals the stale Bluetooth client is released through.
+
+    The reconnect loop reaches ``Casambi._casaClient._gattClient`` to
+    disconnect a Bleak client the library left behind (casambi-bt #76).
+    """
+    source = inspect.getsource(Casambi.__init__)
+    assert "self._casaClient" in source, "Casambi._casaClient is gone"
+    client_init = inspect.getsource(casambi_client.CasambiClient.__init__)
+    assert "self._gattClient" in client_init, "CasambiClient._gattClient is gone"
+
+
 def test_reconnect_takes_a_device() -> None:
     """Test that reconnect still accepts the BLE device as its only argument."""
     params = list(inspect.signature(Casambi.reconnect).parameters)

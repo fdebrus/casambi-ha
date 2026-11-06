@@ -78,7 +78,8 @@ Units are classified by their control layout (`classify.py`): motors become cove
 
 - **Like the wall button.** Winsol motors have the start/stop bit the wall button toggles: setting it runs the motor opposite its last run, clearing it stops it at once. *Open* and *close* use that bit whenever it sends the motor the requested way, so *stop* is instant. Otherwise they send a position; a screen moving that way is stopped with a target about 1.5 s ahead of it, louvres are left to finish. *Set position* always sends a position.
 - **Screens are inverted.** Casambi counts how far a screen is *extended*; Home Assistant counts how far it is *open*. Open retracts the screen, close extends it.
-- **Screen position is estimated.** A screen reports its target, not where it is. While it moves (from HA, the app or the button) HA shows *opening*/*closing* with a position estimated from its 35 s travel time, refreshed every second.
+- **Screen position is estimated.** A screen reports its target, not where it is. While it moves (from HA, the app or the button) HA shows *opening*/*closing* with a position estimated from its 35 s travel time, refreshed every second. A position sent from the app behind a moving screen is ignored by the screen, and by HA too.
+- **The wall button is seen right away.** A button press stopping a run HA has just started shows as a stop, even within the first seconds.
 
 ## Pergola automation
 
@@ -89,8 +90,8 @@ Each louvre has a set of switches and dials; together they work in this order �
 **🌡️ Temperature control** — while tracking runs, each °C above the **Temperature setpoint** (15–30 °C) tilts the slats 10° toward shade, each °C below 10° toward sun.
 
 **🌧️💨 Weather protection** — a network switch, present when there is a louvre or screen to protect and a Sensor Platform or a rain/wind sensor is configured. While it holds, it is a lock like the frost lock, not a one-off command.
-- **Rain** closes the louvres and pauses tracking until it is dry.
-- **Wind** at the threshold retracts the screens, closes the louvres (the position the roof is rated for: Winsol SO! wind class 3, 6 Beaufort) and pauses tracking until it drops below 80 % of the threshold. Screens are never lowered again automatically.
+- **Rain** closes the louvres and pauses tracking until it has been dry for 15 minutes; rain within them starts the wait over.
+- **Wind** at the threshold retracts the screens (a screen already extending is reversed, since it would ignore a position behind it), closes the louvres (the position the roof is rated for: Winsol SO! wind class 3, 6 Beaufort) and pauses tracking until it drops below 80 % of the threshold. Screens are never lowered again automatically.
 - **Locked while it holds.** Home Assistant refuses to open the louvres (rain or wind) or to extend a screen (wind), from the dashboard, Siri/HomeKit or an automation, with an error saying why. Closing, retracting and stopping still work. The cover shows `weather_lock` (`wind`, `rain` or empty) and `weather_lock_value` (the wind in km/h) as attributes.
 - **Sent back when moved elsewhere.** The wall button and the Casambi app are not blocked, but a louvre or screen they moved out of safety is closed or retracted again as soon as it has stopped, at most once every 30 s per motor. One that keeps stopping short (an obstacle) is retried less and less often, up to every 16 minutes, with a warning in the log.
 - A command that fails (the link was down during a gust) is sent again on the next reading and as soon as the pergola is reachable. Unavailable sensors keep their last reading. Turning the switch off releases everything at once.
@@ -119,7 +120,8 @@ Wired button modules only report on the input stream; some release frames get lo
 
 ## Connection
 
-- The integration reconnects on its own: retries start after 2 s and back off to 5 minutes (1 minute while no adapter sees the network). A changed password is only noticed at the next Home Assistant restart, which then asks for it again.
+- The integration reconnects on its own: retries start after 2 s and back off to 5 minutes (1 minute while no adapter sees the network). Each attempt first lets go of the Bluetooth client the dropped link left behind, which could otherwise stall the handshake. A changed password is only noticed at the next Home Assistant restart, which then asks for it again.
+- Re-entering the password or reconfiguring only clears the cached copy of the network once the new settings connect: a failed attempt leaves it in place.
 - The **Status** sensor goes off the moment the link drops, and all unit entities go unavailable with it.
 - When the Casambi cloud has an incident at startup, the integration connects from its cached copy of the network instead of waiting for the cloud.
 - When the network reappears after an outage, the reconnect starts at once instead of waiting out the backoff.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 import inspect
 import logging
 from pathlib import Path
@@ -50,6 +50,7 @@ from .const import (
     RECONNECT_BACKOFF_START,
     RECONNECT_BACKOFF_STEP,
     RECONNECT_WARN_AFTER,
+    STALE_LINK_RELEASE_TIMEOUT,
     entry_option,
 )
 from .platform_packets import decode_platform_packet
@@ -254,6 +255,9 @@ class CasambiApi:
         # it has stopped, and a screen's motion and position are only known
         # from its estimate.
         self._rest_checks: dict[str, Callable[[], int | None]] = {}
+        # How a screen's cover retracts it for the weather protection, which
+        # knows from its motion model whether a position would take.
+        self._retract_handlers: dict[str, Callable[[], Awaitable[None]]] = {}
         # Covers to refresh when the weather lock changes.
         self._lock_listeners: list[Callable[[], None]] = []
         # A unit's kind follows from its type, which is fixed while the
@@ -396,6 +400,7 @@ class CasambiApi:
                 if not device:
                     raise BluetoothDeviceNotFoundError  # noqa: TRY301
 
+                await self._release_stale_link()
                 await self._casa.reconnect(device)
                 if not self._casa.connected:
                     raise BluetoothError(  # noqa: TRY301
@@ -481,6 +486,27 @@ class CasambiApi:
 
             await self._wait_backoff(backoff)
             backoff = min(RECONNECT_BACKOFF_MAX, backoff * RECONNECT_BACKOFF_STEP)
+
+    async def _release_stale_link(self) -> None:
+        """Release the Bluetooth client the dropped link left behind.
+
+        The library only disconnects its Bleak client while that reports
+        itself connected, so after a drop the old client keeps its BlueZ
+        session (or proxy slot), and the next key exchange can stall on it
+        (casambi-bt issue #76). Disconnecting it anyway frees it; a failure
+        here changes nothing for the reconnect that follows.
+        """
+        client = getattr(self._casa, "_casaClient", None)
+        gatt = getattr(client, "_gattClient", None)
+        if gatt is None or gatt.is_connected:
+            return
+        try:
+            async with asyncio.timeout(STALE_LINK_RELEASE_TIMEOUT):
+                await gatt.disconnect()
+        except Exception:  # pylint: disable=broad-except
+            _LOGGER.debug(
+                "Releasing the previous Bluetooth client failed", exc_info=True
+            )
 
     async def _wait_backoff(self, delay: float) -> None:
         """Wait out a reconnect backoff, or less if woken."""
@@ -582,6 +608,20 @@ class CasambiApi:
     def unregister_rest_check(self, unit: Unit) -> None:
         """Forget a motor's rest check."""
         self._rest_checks.pop(unit.uuid, None)
+
+    def register_retract_handler(
+        self, unit: Unit, handler: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Register how to retract a screen whatever it is doing."""
+        self._retract_handlers[unit.uuid] = handler
+
+    def unregister_retract_handler(self, unit: Unit) -> None:
+        """Forget a screen's retract handler."""
+        self._retract_handlers.pop(unit.uuid, None)
+
+    def retract_handler(self, unit: Unit) -> Callable[[], Awaitable[None]] | None:
+        """Return the cover's way to retract a screen, if it has one."""
+        return self._retract_handlers.get(unit.uuid)
 
     def unit_rest_position(self, unit: Unit) -> int | None:
         """Return the raw position a motor rests at, or None while it moves.

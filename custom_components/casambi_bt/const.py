@@ -55,6 +55,8 @@ RECONNECT_BACKOFF_MAX: Final = 300
 RECONNECT_BACKOFF_NO_DEVICE: Final = 60
 # Warn in the log once a reconnect has been failing for this long (s).
 RECONNECT_WARN_AFTER: Final = 300
+# How long releasing the Bluetooth client of a dropped link may take (s).
+STALE_LINK_RELEASE_TIMEOUT: Final = 10
 
 
 def entry_option(entry: ConfigEntry, key: str, default: Any) -> Any:
