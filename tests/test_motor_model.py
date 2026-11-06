@@ -516,3 +516,89 @@ async def test_louvre_stop_from_ha_holds_the_estimate(
         await rig.tick(1.5)
         await rig.report(louvre, "4101009009")  # stopped at 153
         assert hass.states.get(entity_id).attributes["current_position"] == 60
+
+
+async def test_louvre_stop_during_a_position_move(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test stop while the louvres open to a position sent from the app.
+
+    Stop only cleared the bit of a button run, so a move to a position went
+    on. Moving louvres honour a new position: stop sends the estimate 1 s
+    ahead, rounded further along.
+    """
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, LOUVRE_CLOSED)
+        await rig.tick(100)
+        await rig.report(louvre, LOUVRE_OPEN)  # 255 sent from the app
+        await rig.tick(10)
+        await rig.call("stop_cover", entity_id)
+
+        mock_casambi.setControlValue.assert_not_awaited()
+        mock_casambi.setSlider.assert_awaited_once()
+        # 11 s of a 22 s travel: raw 127.5, rounded up.
+        assert mock_casambi.setSlider.await_args.args[1] == 128
+
+
+async def test_louvre_stop_during_a_position_close(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test stop while the louvres close to a position: rounded down."""
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, LOUVRE_OPEN)
+        await rig.tick(100)
+        await rig.report(louvre, LOUVRE_CLOSED)
+        await rig.tick(5)
+        assert hass.states.get(entity_id).state == "closing"
+        await rig.call("stop_cover", entity_id)
+
+        # 6 s of closing from 255: raw 185.5, rounded down.
+        assert mock_casambi.setSlider.await_args.args[1] == 185
+
+
+async def test_louvre_stop_sends_nothing_at_rest_or_on_arrival(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test stop at rest, and within the margin of the target."""
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, LOUVRE_CLOSED)
+        await rig.tick(100)
+        await rig.call("stop_cover", entity_id)
+
+        # 118 is reached 10.2 s in; 9.5 s in it gets there within 1 s.
+        await rig.report(louvre, LOUVRE_AT_118)
+        await rig.tick(9.5)
+        await rig.call("stop_cover", entity_id)
+
+        mock_casambi.setSlider.assert_not_awaited()
+        mock_casambi.setControlValue.assert_not_awaited()
