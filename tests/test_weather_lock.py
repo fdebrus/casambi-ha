@@ -532,3 +532,73 @@ async def test_a_storm_above_63_kmh_keeps_the_lock(
         hass, "sensor", f"{NETWORK_ID}-unit-{SENSOR_PLATFORM_UUID}-wind"
     )
     assert float(hass.states.get(wind_id).state) == 70.0
+
+
+async def test_a_gust_during_a_close_reverses_the_screen(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the wind reaching the threshold while the screen extends.
+
+    A moving screen ignores a position behind it, so the retract sent as
+    position 0 left it extending into the gust. It is reversed with the
+    start/stop bit instead.
+    """
+    clock = [1000.0]
+    with (
+        patch(
+            "custom_components.casambi_bt.cover.monotonic",
+            side_effect=lambda: clock[0],
+        ),
+        patch(
+            "custom_components.casambi_bt.switch.monotonic",
+            side_effect=lambda: clock[0],
+        ),
+    ):
+        await _setup(hass, mock_config_entry)
+        _weather(hass, mock_casambi, wind=10)
+        await _enable(hass, mock_casambi)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+        screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
+        screen.setStateFromBytes(bytes.fromhex("818b080000"))
+        handler(screen)
+        clock[0] = 1100.0
+
+        # Closed from the app, sent as a position: no start/stop bit.
+        screen.setStateFromBytes(bytes.fromhex("818b08f00f"))
+        handler(screen)
+        await hass.async_block_till_done()
+        clock[0] += 5
+        assert hass.states.get(screen_id).state == "closing"
+
+        _weather(hass, mock_casambi, wind=50)
+        await hass.async_block_till_done()
+
+        assert [
+            (call.args[1].offset, call.args[2])
+            for call in mock_casambi.setControlValue.await_args_list
+        ] == [(36, 1)]
+        mock_casambi.setLevel.assert_not_awaited()
+        assert hass.states.get(screen_id).state == "opening"
+
+
+async def test_a_gust_retracts_a_resting_screen_with_a_position(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a screen at rest still gets position 0, not the bit."""
+    await _setup(hass, mock_config_entry)
+    _weather(hass, mock_casambi, wind=10)
+    await _enable(hass, mock_casambi)
+
+    _weather(hass, mock_casambi, wind=50)
+    await hass.async_block_till_done()
+
+    mock_casambi.setControlValue.assert_not_awaited()
+    mock_casambi.setLevel.assert_awaited_once()
+    assert mock_casambi.setLevel.await_args.args[1] == 0

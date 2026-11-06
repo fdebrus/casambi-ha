@@ -1,10 +1,14 @@
 """Tests for temperature control and weather protection."""
 
+from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
 from CasambiBt.errors import BluetoothError
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import (
+    MockConfigEntry,
+    async_fire_time_changed,
+)
 
 from custom_components.casambi_bt.const import (
     CONF_RAIN_ENTITY,
@@ -17,6 +21,7 @@ from custom_components.casambi_bt.readings import (
     entity_temperature_c,
     entity_wind_kmh,
 )
+from custom_components.casambi_bt.switch import RAIN_RELEASE_DELAY
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     ATTR_UNIT_OF_MEASUREMENT,
@@ -25,6 +30,7 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, State
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er
+from homeassistant.util import dt as dt_util
 
 from .conftest import (
     SENSOR_PLATFORM_UUID,
@@ -37,6 +43,12 @@ from .conftest import (
 )
 
 TEMP_SENSOR = "sensor.terrace_temperature"
+
+
+async def _stay_dry(hass: HomeAssistant, delay: timedelta = RAIN_RELEASE_DELAY) -> None:
+    """Let time pass: the rain lock lifts once it has been dry long enough."""
+    async_fire_time_changed(hass, dt_util.utcnow() + delay + timedelta(seconds=1))
+    await hass.async_block_till_done()
 
 
 async def test_temperature_control_biases_tracking(
@@ -148,6 +160,9 @@ async def test_weather_protection_rain_and_wind(
     mock_casambi.setSlider.reset_mock()
     push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
     await hass.async_block_till_done()
+    # Not before it has been dry for a while.
+    assert api.rain_active is True
+    await _stay_dry(hass)
 
     assert api.rain_active is False
     mock_casambi.setSlider.assert_not_awaited()
@@ -209,6 +224,7 @@ async def test_rain_pauses_sun_tracking(
         # Dry again: tracking moves the louvres at its next update.
         push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
         await hass.async_block_till_done()
+        await _stay_dry(hass)
         assert api.rain_active is False
         await hass.services.async_call(
             "switch", "turn_off", {ATTR_ENTITY_ID: tracking_id}, blocking=True
@@ -332,6 +348,7 @@ async def test_rain_entity_without_sensor_platform(
 
     hass.states.async_set(RAIN_ENTITY, "off")
     await hass.async_block_till_done()
+    await _stay_dry(hass)
     assert api.rain_active is False
     mock_casambi.setSlider.assert_awaited_once()
 
@@ -364,6 +381,7 @@ async def test_rain_entity_and_sensor_platform_combine(
 
     hass.states.async_set(RAIN_ENTITY, "off")
     await hass.async_block_till_done()
+    await _stay_dry(hass)
     assert api.rain_active is False
 
 
@@ -806,3 +824,75 @@ async def test_weather_protection_retries_failed_commands(
     api._notify_connection_state()  # noqa: SLF001
     await hass.async_block_till_done()
     mock_casambi.setLevel.assert_not_awaited()
+
+
+async def test_rain_lock_waits_for_a_dry_spell(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a pause in a shower doesn't release the louvres.
+
+    The lock lifts only once the sensor has read dry for 15 minutes; rain
+    within them starts the wait over without closing the louvres again.
+    """
+    await _setup(hass, mock_config_entry)
+    api = mock_config_entry.runtime_data
+    sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
+    push_platform(api._unit_changed_handler, sensor_unit, wind=10)  # noqa: SLF001
+    protection_id = _entity_id(
+        hass, "switch", f"{mock_casambi.networkId}-weather-protection"
+    )
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+    push_platform(api._unit_changed_handler, sensor_unit, rain=1)  # noqa: SLF001
+    await hass.async_block_till_done()
+    mock_casambi.setSlider.reset_mock()
+
+    push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
+    await hass.async_block_till_done()
+    await _stay_dry(hass, RAIN_RELEASE_DELAY - timedelta(minutes=5))
+    assert api.rain_active is True
+
+    # Wet again before the wait is over, then dry: the wait starts over.
+    push_platform(api._unit_changed_handler, sensor_unit, rain=1)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
+    await hass.async_block_till_done()
+    await _stay_dry(hass, timedelta(minutes=6))
+    assert api.rain_active is True
+    # The louvres were still held: nothing was sent again.
+    mock_casambi.setSlider.assert_not_awaited()
+
+    await _stay_dry(hass)
+    assert api.rain_active is False
+
+
+async def test_turning_protection_off_drops_the_rain_release(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that turning the switch off releases at once, timer or not."""
+    await _setup(hass, mock_config_entry)
+    api = mock_config_entry.runtime_data
+    sensor_unit = unit_by_uuid(mock_casambi, SENSOR_PLATFORM_UUID)
+    push_platform(api._unit_changed_handler, sensor_unit, wind=10)  # noqa: SLF001
+    protection_id = _entity_id(
+        hass, "switch", f"{mock_casambi.networkId}-weather-protection"
+    )
+    await hass.services.async_call(
+        "switch", "turn_on", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+    push_platform(api._unit_changed_handler, sensor_unit, rain=1)  # noqa: SLF001
+    push_platform(api._unit_changed_handler, sensor_unit, rain=0)  # noqa: SLF001
+    await hass.async_block_till_done()
+
+    await hass.services.async_call(
+        "switch", "turn_off", {ATTR_ENTITY_ID: protection_id}, blocking=True
+    )
+    assert api.rain_active is False
+    await _stay_dry(hass)
+    assert api.rain_active is False

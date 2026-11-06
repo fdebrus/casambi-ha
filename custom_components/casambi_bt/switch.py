@@ -24,6 +24,7 @@ from CasambiBt import Unit, UnitControl, UnitControlType
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
 from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import (
+    CALLBACK_TYPE,
     Event,
     EventStateChangedData,
     HomeAssistant,
@@ -34,6 +35,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity import EntityCategory, EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import (
+    async_call_later,
     async_track_state_change_event,
     async_track_time_interval,
 )
@@ -91,6 +93,9 @@ WIND_HYSTERESIS: Final = 0.8
 # A motor that keeps resting out of safety is sent back at doubling
 # intervals, up to WEATHER_RESECURE_INTERVAL * 2**RESECURE_BACKOFF_STEPS.
 RESECURE_BACKOFF_STEPS: Final = 5
+# Rain holds the louvres until it has been dry this long: a shower comes
+# and goes, and a sensor drying in the wind reports dry between drops.
+RAIN_RELEASE_DELAY: Final = timedelta(minutes=15)
 
 
 # The sensor platform's writable enable bits, in bit-offset order
@@ -542,6 +547,8 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         # overcurrent stop) backs off: uuid -> (attempts in a row without
         # progress, raw position at the last attempt).
         self._attempts: dict[str, tuple[int, int]] = {}
+        # The release of the rain lock once it has been dry long enough.
+        self._cancel_rain_release: CALLBACK_TYPE | None = None
 
     async def async_added_to_hass(self) -> None:
         """Restore the setting and start listening to the weather sources."""
@@ -573,6 +580,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
             self._api.unregister_unit_updates(unit, self._sensor_update)
         for unit in (*self._louvres, *self._screens):
             self._api.unregister_unit_updates(unit, self._motor_update, late=True)
+        self._stop_rain_release()
         await super().async_will_remove_from_hass()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
@@ -598,6 +606,7 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         self._pending.clear()
         self._secured_at.clear()
         self._attempts.clear()
+        self._stop_rain_release()
         self.async_write_ha_state()
         self._api.notify_weather_lock()
 
@@ -679,10 +688,14 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
         """Send one protective command; keep it pending if it fails.
 
         Retracted is raw 0 on the Winsol SO! (the dimmer counts how far the
-        screen is extended) and closed is slider 0 on the louvres.
+        screen is extended) and closed is slider 0 on the louvres. A screen
+        is retracted through its cover, which reverses one already moving
+        out; a position would be ignored by it.
         """
         try:
-            if retract:
+            if retract and (handler := self._api.retract_handler(unit)):
+                await handler()
+            elif retract:
                 await self._async_casa_command(self._api.casa.setLevel(unit, 0))
             else:
                 await self._async_casa_command(self._api.casa.setSlider(unit, 0))
@@ -785,19 +798,53 @@ class CasambiWeatherProtectionSwitch(CasambiNetworkEntity, CasambiRestoredSwitch
 
     @callback
     def _update_rain(self) -> None:
-        """Close the louvres when rain starts and release them when it stops."""
+        """Close the louvres when rain starts; release them once it's dry.
+
+        The lock lifts RAIN_RELEASE_DELAY after the last wet reading, so a
+        pause in a shower doesn't let sun tracking open the roof into the
+        next one.
+        """
         raining = self._platform_rain or self._entity_rain
-        if raining and not self._api.rain_active:
-            self._api.rain_active = True
-            _LOGGER.info("Weather protection: rain detected, closing louvres")
-            for louvre in self._louvres:
-                self._secure(louvre, retract=False)
-            self._api.notify_weather_lock()
-        elif not raining and self._api.rain_active:
-            self._api.rain_active = False
-            self._attempts.clear()
-            _LOGGER.info("Weather protection: rain stopped")
-            self._api.notify_weather_lock()
+        if raining:
+            if self._cancel_rain_release is not None:
+                self._stop_rain_release()
+                _LOGGER.info("Weather protection: raining again, louvres stay closed")
+            if not self._api.rain_active:
+                self._api.rain_active = True
+                _LOGGER.info("Weather protection: rain detected, closing louvres")
+                for louvre in self._louvres:
+                    self._secure(louvre, retract=False)
+                self._api.notify_weather_lock()
+        elif self._api.rain_active and self._cancel_rain_release is None:
+            _LOGGER.info(
+                "Weather protection: rain stopped, releasing the louvres in %d "
+                "minutes if it stays dry",
+                RAIN_RELEASE_DELAY.total_seconds() // 60,
+            )
+            self._cancel_rain_release = async_call_later(
+                self.hass, RAIN_RELEASE_DELAY, self._release_rain
+            )
+
+    @callback
+    def _release_rain(self, _now: Any) -> None:
+        """Lift the rain lock: it has been dry for RAIN_RELEASE_DELAY."""
+        self._cancel_rain_release = None
+        if self._platform_rain or self._entity_rain or not self._api.rain_active:
+            return
+        self._api.rain_active = False
+        self._attempts.clear()
+        _LOGGER.info(
+            "Weather protection: dry for %d minutes, louvres released",
+            RAIN_RELEASE_DELAY.total_seconds() // 60,
+        )
+        self._api.notify_weather_lock()
+        # A command still pending for the rain alone is no longer wanted.
+        self._retry_pending()
+
+    def _stop_rain_release(self) -> None:
+        if self._cancel_rain_release is not None:
+            self._cancel_rain_release()
+            self._cancel_rain_release = None
 
     @callback
     def _sensor_update(self, unit: Unit) -> None:

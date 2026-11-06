@@ -1,5 +1,6 @@
 """Tests for the Casambi Bluetooth config flow."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from bleak.backends.device import BLEDevice
@@ -452,3 +453,97 @@ async def test_user_flow_connection_problems_are_not_a_bad_password(
 
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"base": "cannot_connect"}
+
+
+async def _start_reauth(hass: HomeAssistant, entry: MockConfigEntry) -> dict:
+    return await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={"source": SOURCE_REAUTH, "entry_id": entry.entry_id},
+        data=entry.data,
+    )
+
+
+async def test_failed_reauth_keeps_the_network_cache(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a refused password doesn't wipe the entry's network cache.
+
+    The check cleared the cache before connecting, so a failed attempt
+    took away the copy the entry falls back on when the cloud is down.
+    """
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    mock_casambi.connect.side_effect = AuthenticationError
+
+    result = await _start_reauth(hass, mock_config_entry)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {CONF_PASSWORD: "wrong"}
+    )
+
+    assert result["errors"] == {"base": "invalid_auth"}
+    mock_casambi.invalidateCache.assert_not_awaited()
+
+
+async def test_failed_reconfigure_keeps_the_network_cache(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a reconfigure that can't connect leaves the cache alone."""
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+    mock_casambi.connect.side_effect = BluetoothError
+
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN,
+        context={
+            "source": SOURCE_RECONFIGURE,
+            "entry_id": mock_config_entry.entry_id,
+        },
+    )
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {**USER_INPUT, CONF_ADDRESS: NETWORK_ADDRESS}
+    )
+
+    assert result["errors"] == {"base": "cannot_connect"}
+    mock_casambi.invalidateCache.assert_not_awaited()
+
+
+async def test_successful_reauth_refreshes_the_network_cache(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the check runs on a cache of its own, then clears the entry's.
+
+    The network may have been changed in the app; the reloaded entry
+    fetches it again.
+    """
+    mock_config_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    with patch(
+        "custom_components.casambi_bt.config_flow.Casambi", return_value=mock_casambi
+    ) as casambi:
+        result = await _start_reauth(hass, mock_config_entry)
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {CONF_PASSWORD: "new-password"}
+        )
+        await hass.async_block_till_done()
+
+    assert result["reason"] == "reauth_successful"
+    entry_cache = Path(hass.config.config_dir) / ".storage" / DOMAIN
+    check_cache, clear_cache = (c.args[1] for c in casambi.call_args_list)
+    assert check_cache != entry_cache
+    # The check's own cache is gone with it.
+    assert not check_cache.parent.exists()
+    assert clear_cache == entry_cache
+    mock_casambi.invalidateCache.assert_awaited_once_with(NETWORK_ADDRESS)

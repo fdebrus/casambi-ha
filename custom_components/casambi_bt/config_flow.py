@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from functools import partial
 import logging
+from pathlib import Path
+import shutil
+from tempfile import mkdtemp
 from typing import Any
 
 from CasambiBt import Casambi
@@ -74,9 +78,15 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+
+    The connection is tried on a fresh cache of its own, so that a network
+    changed in the app is seen and a failed attempt (a wrong password, the
+    proxy dropping out) leaves the entry's cache alone: a reauth or
+    reconfigure that fails must not take away what the running entry falls
+    back on when the cloud is down. Only a network that answered gets its
+    cache cleared, for the entry to load it fresh.
     """
     client = get_async_client(hass)
-    casa = Casambi(client, get_cache_dir(hass))
     bt_device = async_ble_device_from_address(
         hass, data[CONF_ADDRESS], connectable=True
     )
@@ -84,13 +94,21 @@ async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str
     if not bt_device:
         raise NetworkNotFoundError
 
-    await casa.invalidateCache(bt_device.address)
-    await casa.connect(bt_device, data[CONF_PASSWORD])
+    scratch = await hass.async_add_executor_job(mkdtemp, None, f"{DOMAIN}-")
+    try:
+        casa = Casambi(client, Path(scratch) / "cache")
+        await casa.connect(bt_device, data[CONF_PASSWORD])
 
-    network_name = casa.networkName
+        network_name = casa.networkName
 
-    # We need to disconnect again because otherwise setup will fail
-    await casa.disconnect()
+        # We need to disconnect again because otherwise setup will fail
+        await casa.disconnect()
+    finally:
+        await hass.async_add_executor_job(
+            partial(shutil.rmtree, scratch, ignore_errors=True)
+        )
+
+    await Casambi(client, get_cache_dir(hass)).invalidateCache(bt_device.address)
 
     # Return info that you want to store in the config entry.
     return {"title": network_name, "id": data[CONF_ADDRESS]}

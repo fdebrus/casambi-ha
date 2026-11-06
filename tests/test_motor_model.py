@@ -200,3 +200,170 @@ async def test_louvre_double_tap_from_the_closed_end(
     await rig.report(louvre, "4101000000")
     await rig.report(louvre, "4101000010")
     assert hass.states.get(entity_id).state == "closing"
+
+
+async def test_louvre_button_stop_right_after_an_ha_start(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the wall button stopping a run Home Assistant started a second ago.
+
+    Every clear within 3 s of the write was taken for its echo, so the
+    louvres kept showing closing after the button had stopped them.
+    """
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, "020000f00f")
+        await rig.call(SERVICE_CLOSE_COVER, entity_id)
+        await rig.tick(0.5)
+        await rig.report(louvre, "410100f01f")  # the echo of the set bit
+        assert hass.states.get(entity_id).state == "closing"
+
+        await rig.tick(0.5)
+        await rig.report(louvre, "410100f00f")  # the button stops it
+        await rig.report(louvre, "4101007006")
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes["current_position"] == 40
+
+        # Resting at 40 % after a close: open runs it back with the bit.
+        # Taken for the run still going, it was thought fully open and
+        # nothing was sent.
+        mock_casambi.setControlValue.reset_mock()
+        await rig.tick(10)
+        await rig.call(SERVICE_OPEN_COVER, entity_id)
+        assert _bit_writes(mock_casambi) == [(36, 1)]
+
+
+async def test_louvre_reversal_echoes_are_not_a_stop(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a reversal's echoes still don't end the run.
+
+    A state the motor sent before it got the write (the bit not yet
+    cleared) is no echo of the clear and doesn't consume it.
+    """
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
+
+        await rig.report(louvre, "020000f00f")
+        await rig.call(SERVICE_CLOSE_COVER, entity_id)
+        await rig.report(louvre, "410100f01f")
+        await rig.tick(5)
+        await rig.call(SERVICE_OPEN_COVER, entity_id)
+        await rig.tick(0.2)
+        await rig.report(louvre, "410100f01f")  # sent before the write
+        await rig.report(louvre, "410100f00f")  # echo of the clear
+        await rig.report(louvre, "410100f01f")  # echo of the set
+        assert hass.states.get(entity_id).state == "opening"
+        # Every write echoed: the button's stop now counts.
+        await rig.tick(0.5)
+        await rig.report(louvre, "410100f00f")
+        assert hass.states.get(entity_id).state == "open"
+
+
+async def test_screen_button_stop_right_after_an_ha_start(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the wall button stopping a screen Home Assistant just started."""
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
+
+        await rig.report(screen, SCREEN_OPEN)
+        await rig.tick(100)
+        await rig.call(SERVICE_CLOSE_COVER, entity_id)
+        await rig.tick(0.5)
+        await rig.report(screen, SCREEN_RUN_FROM_OPEN)  # the echo
+        assert hass.states.get(entity_id).state == "closing"
+
+        await rig.tick(1.5)
+        await rig.report(screen, SCREEN_OPEN)  # the button stops it
+        await rig.tick(5)
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        # Stopped after 2 s of a 35 s travel.
+        assert state.attributes["current_position"] == 94
+
+
+async def test_screen_ignores_a_target_behind_it(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a position sent from the app just behind a closing screen.
+
+    The screen ignores it and goes on to the end (capture: 52 at 7.1 s into
+    a close). The cover took it for a new target and showed the screen
+    stopped there, and again each time the unit repeated it.
+    """
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
+
+        await rig.report(screen, SCREEN_OPEN)
+        await rig.tick(100)
+        await rig.report(screen, SCREEN_CLOSED)
+        await rig.tick(7.1)
+        await rig.report(screen, "818b084003")  # target 52, estimate 51.7
+        assert hass.states.get(entity_id).state == "closing"
+
+        await rig.tick(30)
+        await rig.report(screen, "818b084003")  # repeated at rest
+        state = hass.states.get(entity_id)
+        assert state.state == "closed"
+        assert state.attributes["current_position"] == 0
+
+
+async def test_screen_honours_a_target_ahead_of_it(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test a position just ahead of a closing screen (65 at 8.8 s)."""
+    clock = [1000.0]
+    with _patched_clock(clock):
+        await _setup(hass, mock_config_entry)
+        rig = _Rig(hass, mock_casambi)
+        rig.clock = clock
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        entity_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
+
+        await rig.report(screen, SCREEN_OPEN)
+        await rig.tick(100)
+        await rig.report(screen, SCREEN_CLOSED)
+        await rig.tick(8.8)
+        await rig.report(screen, "818b081004")  # target 65, estimate 64.1
+        await rig.tick(5)
+        state = hass.states.get(entity_id)
+        assert state.state == "open"
+        assert state.attributes["current_position"] == 75

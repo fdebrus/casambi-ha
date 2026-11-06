@@ -58,12 +58,18 @@ DEFAULT_TRAVEL_MS: Final = 35000
 # latency; 1.5 s is about 4 % of a 35 s travel).
 STOP_AHEAD_SECONDS: Final = 1.5
 
+# A moving screen ignores a target behind it. Margin (raw) on the estimate
+# for what counts as behind: 52 reported against an estimated 51.7 was
+# ignored, 65 against 64.1 was honoured (SO! V4.1 captures).
+BEHIND_MARGIN: Final = 0.5
+
 # How often the estimated position of a moving screen is refreshed.
 MOTION_UPDATE_INTERVAL: Final = timedelta(seconds=1)
 
 # After Home Assistant writes the start/stop bit, the motor echoes each
 # write as a state push within this many seconds (0.5 s in the captures).
-# Those echoes carry nothing the integration doesn't already know.
+# Those echoes carry nothing the integration doesn't already know; a push
+# after them, or after this, is the motor's own news (the wall button).
 BIT_ECHO_SECONDS: Final = 3.0
 
 
@@ -244,9 +250,11 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         # Whether a bit run happened since the motor last rested: its stop
         # position must not be read as a position-driven move.
         self._ran_since_rest = False
-        # When Home Assistant last set the bit itself, to tell the motor's
-        # echoes of that write from runs started elsewhere.
-        self._commanded_at: float | None = None
+        # The bit values the motor is still to echo for the writes Home
+        # Assistant just made, and until when, to tell those echoes from a
+        # wall button stopping the run.
+        self._echoes: list[bool] = []
+        self._echo_until = 0.0
         self._note_direction(unit)
 
     @abstractmethod
@@ -338,14 +346,27 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             },
         )
 
-    def _commanded_recently(self) -> bool:
-        """Return True while the motor may still echo a bit written by HA."""
-        return (
-            self._commanded_at is not None
-            and monotonic() - self._commanded_at < BIT_ECHO_SECONDS
-        )
+    def _echo(self, running: bool) -> bool:
+        """Return True if a push is the motor echoing Home Assistant's bit.
 
-    def _bit_run_started(self, raising: bool, raw_end: int) -> None:
+        The motor echoes each write in order (a reversal is a clear, then
+        a set). A push with another bit than the next echo is a state it
+        sent before it got the write. Once every write was echoed, a clear
+        is a real stop: the wall button pressed during the run. An echo that
+        never comes holds the stop back for BIT_ECHO_SECONDS at most.
+        """
+        if not self._echoes:
+            return False
+        if monotonic() >= self._echo_until:
+            self._echoes.clear()
+            return False
+        if self._echoes[0] == running:
+            del self._echoes[0]
+        return True
+
+    def _bit_run_started(
+        self, raising: bool, raw_end: int, echoes: tuple[bool, ...] = (True,)
+    ) -> None:
         """Record a run Home Assistant just started by setting the bit.
 
         The library applies the bit to the unit at once, so the run is
@@ -355,7 +376,8 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         self._last_raising = raising
         self._was_running = True
         self._ran_since_rest = True
-        self._commanded_at = monotonic()
+        self._echoes = list(echoes)
+        self._echo_until = monotonic() + BIT_ECHO_SECONDS
         # Show the run now rather than at the motor's echo.
         self._write_state()
 
@@ -372,8 +394,9 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         """
         running = self._toggle_running(unit)
         raw = self._raw_position(unit)
-        if not running and self._commanded_recently():
-            # The echo of the stop before a reversal: not a rest.
+        if self._echo(running):
+            # Home Assistant's own write coming back: known already, and
+            # the clear before a reversal is not a rest.
             return
         if running and not self._was_running:
             predicted = self._toggle_direction()
@@ -434,7 +457,7 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
             self._rest_raw = None
             self._was_running = False
             self._ran_since_rest = False
-            self._commanded_at = None
+            self._echoes.clear()
         super()._connection_callback()
 
     async def _set_bit(self, value: int) -> None:
@@ -455,14 +478,14 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
                     # A run already under way when the link came back:
                     # which way the bit restarts it is anyone's guess, so
                     # stop it and send the end as a position.
-                    self._commanded_at = None
+                    self._echoes.clear()
                     await self._set_bit(0)
                     await self._async_casa_command(self._send_position(raw_end))
                     return
                 # Like pressing the button twice: stop, then run back.
                 await self._set_bit(0)
                 await self._set_bit(1)
-                self._bit_run_started(raising, raw_end)
+                self._bit_run_started(raising, raw_end, (False, True))
                 return
             if self._rest_raw == raw_end:
                 return
@@ -501,7 +524,7 @@ class CasambiMotorCover(CasambiCover, CasambiUnitEntity, metaclass=ABCMeta):
         if self._toggle_control is None or not self._toggle_running():
             return
         # A stop asked for: its echo is a real rest, not a reversal's.
-        self._commanded_at = None
+        self._echoes.clear()
         await self._set_bit(0)
         self._write_state()
 
@@ -627,6 +650,9 @@ class CasambiScreenCover(CasambiMotorCover):
         # The stop report follows the end of a run within a fraction of a
         # second (171 ms in the captures); after this, a target is a move.
         self._settle_until = 0.0
+        # A target reported behind the moving screen, which it ignored: the
+        # unit keeps reporting it once the screen rests elsewhere.
+        self._ignored_target: int | None = None
         super().__init__(api, unit)
         self._track_motion(unit)
         self._note_direction(unit)
@@ -691,11 +717,11 @@ class CasambiScreenCover(CasambiMotorCover):
         now = monotonic()
 
         button_run = self._toggle_running(unit)
+        if self._echo(button_run):
+            # Home Assistant's own write coming back (with the clear before
+            # a reversal): the motion it started goes on.
+            return False
         if button_run != self._button_run:
-            if not button_run and self._commanded_recently():
-                # The echo of the stop before a reversal Home Assistant
-                # asked for: the motion it started goes on.
-                return False
             self._button_run = button_run
             if button_run:
                 # Started like the wall button: the reported target is stale
@@ -738,17 +764,34 @@ class CasambiScreenCover(CasambiMotorCover):
             self._settling = False
             self._target = target
             return False
-        if target is None or target == self._target:
+        if target is None or target in (self._target, self._ignored_target):
             return False
+        if self._behind(target, now):
+            # Like the screen, go on to where it was heading.
+            self._ignored_target = target
+            return False
+        self._ignored_target = None
         return self._start_motion(target, now)
+
+    def _behind(self, target: int, now: float) -> bool:
+        """Return True if a target lies behind the screen as it moves."""
+        if self._move_start is None or self._target is None:
+            return False
+        estimate = self._estimate(now)
+        if estimate is None or estimate == self._target:
+            return False
+        if self._target > self._move_from:
+            return target <= estimate + BEHIND_MARGIN
+        return target >= estimate - BEHIND_MARGIN
 
     def _raw_position(self, unit: Unit) -> int | None:
         return unit.state.dimmer if unit.state is not None else None
 
     def _send_position(self, raw: int) -> Coroutine[Any, Any, None]:
         # A position sent now is what the screen reports next, not where a
-        # run that just ended stopped.
+        # run that just ended stopped, nor the target it ignored before.
         self._settling = False
+        self._ignored_target = None
         return self._api.casa.setLevel(self._obj, raw)
 
     def _rest_position(self) -> int | None:
@@ -788,15 +831,18 @@ class CasambiScreenCover(CasambiMotorCover):
             self._move_start = None
             self._button_run = False
             self._settling = False
+            self._ignored_target = None
             self._stop_ticking()
         super()._connection_callback()
 
-    def _bit_run_started(self, raising: bool, raw_end: int) -> None:
+    def _bit_run_started(
+        self, raising: bool, raw_end: int, echoes: tuple[bool, ...] = (True,)
+    ) -> None:
         """Start the motion estimate for a run Home Assistant set off."""
         self._button_run = True
         if self._start_motion(raw_end, monotonic()):
             self._ensure_ticking()
-        super()._bit_run_started(raising, raw_end)
+        super()._bit_run_started(raising, raw_end, echoes)
 
     async def _drive_to_end(self, raw_end: int) -> None:
         """Run to an end, also from the middle of a position-driven move.
@@ -866,10 +912,29 @@ class CasambiScreenCover(CasambiMotorCover):
         position = min(max(position, 0), CASA_RAW_MAX)
         await self._async_casa_command(self._send_position(position))
 
+    async def async_added_to_hass(self) -> None:
+        """Let the weather protection retract the screen through the cover."""
+        await super().async_added_to_hass()
+        self._api.register_retract_handler(self._obj, self._async_retract)
+
     async def async_will_remove_from_hass(self) -> None:
         """Stop refreshing when the entity is removed."""
         self._stop_ticking()
+        self._api.unregister_retract_handler(self._obj)
         await super().async_will_remove_from_hass()
+
+    async def _async_retract(self) -> None:
+        """Retract the screen for the weather protection.
+
+        A screen at rest gets position 0, which needs no guess about which
+        way the bit goes. One already moving ignores a position behind it,
+        so a gust during a close would leave it extending: it is reversed
+        with the bit instead, like open does.
+        """
+        if self._toggle_running() or self._moving():
+            await self._drive_to_end(self._raw_open)
+        else:
+            await self._async_casa_command(self._send_position(self._raw_open))
 
     @property
     def current_cover_position(self) -> int | None:

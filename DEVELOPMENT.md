@@ -97,6 +97,20 @@ operation, not an error.
   `async_update_reload_and_abort`; there is no update listener, which
   used to reload the entry a second time (each reload is a BLE connect
   and a cloud login).
+* **A failed check keeps the cache.** The config, reauth and reconfigure
+  flows try the connection on a fresh cache of their own (a temporary
+  directory, removed afterwards) and clear the entry's network cache only
+  once the network answered. Clearing it first meant a refused password or
+  a proxy dropping out took away the copy the running entry falls back on
+  when the cloud is down.
+* **The stale Bluetooth client is let go.** `Casambi.reconnect()` only
+  disconnects its Bleak client while that reports itself connected, so
+  after a drop the old client kept its BlueZ session (or proxy slot) and
+  the next key exchange could stall on it (casambi-bt #76). Each attempt
+  first disconnects a client still there that reads as not connected
+  (`_release_stale_link`, through the library's private `_casaClient` /
+  `_gattClient`, checked by `tests/test_lib_compat.py`), best effort and
+  bounded by `STALE_LINK_RELEASE_TIMEOUT` (10 s).
 
 ### Pitfalls found on the pergola
 
@@ -279,8 +293,14 @@ with the bit clears and sets it again, like pressing the button twice.
 
 The library applies the bit to the unit the moment Home Assistant writes
 it, so a run it starts is recorded then (`_bit_run_started`), and the
-motor's echoes within `BIT_ECHO_SECONDS` (a clear with the stale rest
-when reversing, then the set bit) are not read as a rest or a new run.
+motor's echoes (a clear with the stale rest when reversing, then the set
+bit) are not read as a rest or a new run. The cover keeps the bit values
+still to be echoed, in order (`_echoes`), for at most `BIT_ECHO_SECONDS`:
+a push with the next expected bit consumes it, one with another bit is a
+state the motor sent before it got the write, and once every write was
+echoed a clear is a real stop, the wall button pressed during the run.
+A time window alone took a button stop within 3 s of the write for an
+echo, and the cover kept showing the run.
 A position change at rest with no run in between is a position-driven
 move whose direction is the way it went; the stop position reported after
 a bit run is only read that way when the run's direction is unknown, since
@@ -292,7 +312,11 @@ when it lies behind.
 So the toggle reverses, and the vendor app has no working stop either. A
 position sent while the screen moves is honoured only when it lies ahead
 of it: 52 at 7.1 s was just behind the screen and ignored, 65 at 8.8 s was
-ahead and stopped it. `CasambiScreenCover` therefore stops by sending the
+ahead and stopped it. The cover follows that too: a target reported
+behind the estimate (within `BEHIND_MARGIN`, 0.5 raw) while a position
+move runs is ignored, and so are its repeats once the screen rests at the
+end it was heading for, until another target is taken or Home Assistant
+sends a position. `CasambiScreenCover` therefore stops by sending the
 estimated position 1.5 s ahead in the direction of travel (rounded further
 along), and sends nothing at rest or within that margin of the target. When
 the bit is set — a run started by the wall button or the app — it clears
@@ -501,13 +525,18 @@ temperature source entity is chosen in the integration options.
 **Weather protection**: a network-level switch (created when a sensor
 platform exists or a rain or wind entity is set in the options, and there
 is a louvre or screen to protect). While on: rain closes all louvres and
-pauses sun tracking until dry. Rain is the OR of the sensor platform
+pauses sun tracking until it has been dry for `RAIN_RELEASE_DELAY`
+(15 minutes, an `async_call_later` timer that a wet reading cancels), so
+a pause in a shower doesn't let tracking open the roof into the next one. Rain is the OR of the sensor platform
 (packet 4 ≥ 1) and the rain entity (`entity_reports_rain`: binary sensor
 on, weather condition rainy/pouring/lightning-rainy/snowy-rainy/hail, any
 other numeric state above 0; unavailable/unknown/non-numeric keep the last
 reading); wind at or above the configured threshold
 (default 35 km/h) retracts all screens, closes all louvres and pauses sun
-tracking, latched with 80% hysteresis; screens are never re-extended
+tracking, latched with 80% hysteresis. A screen is retracted through its
+cover (`register_retract_handler`): position 0 at rest, but one already
+moving would ignore a position behind it, so a gust during a close
+reverses it with the bit, as *open* does; screens are never re-extended
 automatically. Wind is the higher of the sensor platform (packet 1, km/h)
 and the wind entity (`entity_wind_kmh`, converted from its unit with
 `SpeedConverter`; no unit means km/h). It acts on the transitions when

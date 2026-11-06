@@ -881,3 +881,79 @@ async def test_an_entity_failing_on_the_drop_does_not_stop_the_reconnect(
 
     mock_casambi.reconnect.assert_awaited_once()
     assert api.available
+
+
+async def test_reconnect_releases_the_stale_bluetooth_client(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that the Bleak client of the dropped link is let go first.
+
+    The library only disconnects it while it reports itself connected, so
+    the old BlueZ session lingered and stalled the next key exchange
+    (casambi-bt #76).
+    """
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    order: list[str] = []
+    gatt = MagicMock(is_connected=False)
+    gatt.disconnect = AsyncMock(side_effect=lambda: order.append("release"))
+    mock_casambi._casaClient = MagicMock(_gattClient=gatt)  # noqa: SLF001
+
+    async def _reconnect(_device: object) -> None:
+        order.append("reconnect")
+        mock_casambi.connected = True
+
+    mock_casambi.connected = False
+    mock_casambi.reconnect.side_effect = _reconnect
+    disconnect()
+    await _reconnect_done(hass, mock_config_entry)
+
+    assert order == ["release", "reconnect"]
+
+
+@pytest.mark.parametrize("failure", [BluetoothError("busy"), TimeoutError()])
+async def test_reconnect_goes_on_when_the_release_fails(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+    failure: Exception,
+) -> None:
+    """Test that a client that can't be released doesn't block the reconnect."""
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    gatt = MagicMock(is_connected=False)
+    gatt.disconnect = AsyncMock(side_effect=failure)
+    mock_casambi._casaClient = MagicMock(_gattClient=gatt)  # noqa: SLF001
+
+    mock_casambi.connected = False
+    disconnect()
+    await _reconnect_done(hass, mock_config_entry)
+
+    gatt.disconnect.assert_awaited_once()
+    mock_casambi.reconnect.assert_awaited_once()
+    assert mock_casambi.connected
+
+
+async def test_reconnect_leaves_a_connected_client_alone(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test that a client still connected is left to the library."""
+    await _setup(hass, mock_config_entry)
+    disconnect = _disconnect_callback(mock_casambi)
+    gatt = MagicMock(is_connected=True)
+    gatt.disconnect = AsyncMock()
+    mock_casambi._casaClient = MagicMock(_gattClient=gatt)  # noqa: SLF001
+
+    mock_casambi.connected = False
+    disconnect()
+    await _reconnect_done(hass, mock_config_entry)
+
+    gatt.disconnect.assert_not_awaited()
+    mock_casambi.reconnect.assert_awaited_once()
