@@ -29,6 +29,9 @@ jobs:
           pip install -r ${{ matrix.requirements }}
       - name: Run tests
         run: pytest tests/ -q
+      - name: Run tests (casambi-ng)
+        working-directory: casambi-ng
+        run: pytest -q
 
   mypy:
     name: mypy (${{ matrix.core }})
@@ -53,4 +56,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r ${{ matrix.requirements }}
       - name: Run mypy
+        run: mypy --python-version ${{ matrix.python-version }}
+      - name: Run mypy (casambi-ng)
+        working-directory: casambi-ng
         run: mypy --python-version ${{ matrix.python-version }}

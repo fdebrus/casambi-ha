@@ -1,0 +1,166 @@
+{
+    "config": {
+        "abort": {
+            "already_configured": "Netzwerk ist schon konfiguriert.",
+            "bluetooth_error": "Bluetooth scheint nicht richtig zu funktionieren.",
+            "not_supported": "Dieses Gerät ist kein verbindbares Casambi Netzwerk.",
+            "reauth_successful": "Neuanmeldung war erfolgreich",
+            "reconfigure_successful": "Neukonfiguration war erfolgreich",
+            "wrong_network": "Die Adresse gehört nicht zum konfigurierten Casambi Netzwerk."
+        },
+        "error": {
+            "cannot_connect": "Verbindung fehlgeschlagen",
+            "invalid_address": "Die Bluetooth MAC Adresse des Netzwerks ist ungültig.",
+            "invalid_auth": "Anmeldung ungültig",
+            "unknown": "Unerwarteter Fehler"
+        },
+        "step": {
+            "reconfigure": {
+                "data": {
+                    "address": "Bluetooth MAC Adresse",
+                    "import_groups": "Gruppen importieren",
+                    "password": "Passwort",
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
+                },
+                "title": "Casambi Netzwerk neu konfigurieren"
+            },
+            "reauth_confirm": {
+                "data": {
+                    "password": "Passwort"
+                },
+                "title": "Bitte bestätige dein Netzwerk Passwort."
+            },
+            "network": {
+                "data": {
+                    "address": "Bluetooth MAC Adresse",
+                    "import_groups": "Gruppen importieren",
+                    "password": "Passwort",
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)"
+                },
+                "title": "Casambi Netzwerk einrichten",
+                "description": "Die Bluetooth MAC Adresse (Netzwerk ID) findest du in den Details deiner Lampen in der Casambi App."
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "import_groups": "Gruppen importieren",
+                    "vertical_as_cover": "Vertikal-Steuerung als Abdeckung anlegen (z.B. Pergola-Lamellen)",
+                    "louvre_azimuth": "Ausrichtung der Pergola (Azimut in Grad, 180 = Süden)",
+                    "wind_threshold": "Windgrenze zum Einfahren der Screens und Schließen der Lamellen (km/h)",
+                    "temperature_entity": "Temperatursensor für die Temperaturregelung und die Frostsperre",
+                    "rain_entity": "Regensensor für den Wetterschutz (Binärsensor, Niederschlagssensor oder Wetter-Entität)",
+                    "wind_entity": "Windgeschwindigkeitssensor für den Wetterschutz",
+                    "frost_lock_temperature": "Frostsperre: Lamellen unter dieser Temperatur nicht öffnen (°C)"
+                },
+                "title": "Casambi Optionen"
+            }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "motion": {
+                "name": "Bewegung"
+            },
+            "presence": {
+                "name": "Anwesenheit"
+            },
+            "rain": {
+                "name": "Regen"
+            },
+            "status": {
+                "name": "Status"
+            }
+        },
+        "event": {
+            "button": {
+                "name": "Taste {button}"
+            }
+        },
+        "number": {
+            "sun_offset": {
+                "name": "Sonnen-Offset"
+            },
+            "temp_setpoint": {
+                "name": "Solltemperatur"
+            },
+            "vertical": {
+                "name": "Vertikal"
+            }
+        },
+        "sensor": {
+            "illuminance": {
+                "name": "Helligkeit"
+            },
+            "louvre_channel": {
+                "name": "Sensorkanal {channel}"
+            },
+            "louvre_module_state": {
+                "name": "Modulstatus"
+            },
+            "louvre_overcurrent": {
+                "name": "Überstromereignisse"
+            },
+            "louvre_temperature": {
+                "name": "Temperatur"
+            },
+            "louvre_travel_distance": {
+                "name": "Zurückgelegter Weg"
+            },
+            "solar": {
+                "name": "Sonneneinstrahlung"
+            },
+            "wind": {
+                "name": "Windgeschwindigkeit"
+            }
+        },
+        "switch": {
+            "frost_lock": {
+                "name": "Frostsperre"
+            },
+            "light_sensor_enabled": {
+                "name": "Lichtsensor aktiviert"
+            },
+            "motion_sensor_enabled": {
+                "name": "Bewegungssensor aktiviert"
+            },
+            "rain_sensor_enabled": {
+                "name": "Regensensor aktiviert"
+            },
+            "sun_tracking": {
+                "name": "Sonnennachführung"
+            },
+            "temperature_control": {
+                "name": "Temperaturregelung"
+            },
+            "weather_protection": {
+                "name": "Wetterschutz"
+            },
+            "wind_sensor_enabled": {
+                "name": "Windsensor aktiviert"
+            }
+        }
+    },
+    "exceptions": {
+        "command_error": {
+            "message": "Der Befehl konnte nicht an das Casambi Netzwerk gesendet werden."
+        },
+        "frost_lock": {
+            "message": "Die Lamellen sind gegen Frost gesperrt: Es hat {temperature} °C, sie könnten an den Dichtungen festgefroren sein. Schließen oder Anhalten ist weiterhin möglich, oder schalte die Frostsperre aus."
+        },
+        "weather_lock_wind": {
+            "message": "{name} wird vom Wetterschutz festgehalten: Der Wind liegt bei {wind} km/h, daher bleibt die Pergola gesichert. Lamellen schließen, Screen einfahren oder Anhalten ist weiterhin möglich, oder schalte den Wetterschutz aus."
+        },
+        "weather_lock_rain": {
+            "message": "{name} wird vom Wetterschutz festgehalten: Es regnet, daher bleiben die Lamellen geschlossen. Schließen oder Anhalten ist weiterhin möglich, oder schalte den Wetterschutz aus."
+        }
+    },
+    "issues": {
+        "unsupported_motor": {
+            "title": "Nicht unterstützter Motor: {name}",
+            "description": "**{name}** ({model}) ist ein Motor, dessen Steuerungen nicht zur Winsol Lamel Standard passen, mit der diese Integration entwickelt und getestet wurde, zum Beispiel eine Winsol Lamel Intelligent (Star-Paket). Damit nicht die falsche Steuerung angesprochen wird, werden für ihn keine Entitäten angelegt.\n\nSteuere ihn stattdessen über die Casambi- oder Winsol-App. Diese Warnung verschwindet, wenn die Einheit aus dem Netzwerk entfernt wird."
+        }
+    }
+}

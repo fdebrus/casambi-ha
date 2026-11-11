@@ -1,0 +1,386 @@
+"""Config flow for Casambi Bluetooth integration."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from functools import partial
+import logging
+from pathlib import Path
+import shutil
+from tempfile import mkdtemp
+from typing import Any
+
+from CasambiBt import Casambi
+from CasambiBt.errors import (
+    AuthenticationError,
+    BluetoothDeviceNotFoundError,
+    NetworkNotFoundError,
+    ProtocolError,
+)
+import voluptuous as vol
+
+from homeassistant import config_entries
+from homeassistant.components.bluetooth import (
+    async_ble_device_from_address,
+    async_scanner_count,
+)
+from homeassistant.components.bluetooth.models import BluetoothServiceInfoBleak
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import selector
+import homeassistant.helpers.config_validation as cv
+from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.httpx_client import get_async_client
+
+from .const import (
+    CONF_FROST_LOCK_TEMPERATURE,
+    CONF_IMPORT_GROUPS,
+    CONF_LOUVRE_AZIMUTH,
+    CONF_RAIN_ENTITY,
+    CONF_TEMPERATURE_ENTITY,
+    CONF_VERTICAL_AS_COVER,
+    CONF_WIND_ENTITY,
+    CONF_WIND_THRESHOLD,
+    DEFAULT_FROST_LOCK_TEMPERATURE,
+    DEFAULT_LOUVRE_AZIMUTH,
+    DEFAULT_WIND_THRESHOLD,
+    DOMAIN,
+    entry_option,
+)
+from .library import LINK_ERRORS, cloud_outage, get_cache_dir
+
+_LOGGER = logging.getLogger(__name__)
+
+# Typed Any: newer cores type their flow schemas as probatio.Schema while
+# older ones use voluptuous; both take this schema at run time.
+USER_SCHEMA: Any = vol.Schema(
+    {
+        vol.Required(CONF_ADDRESS): cv.string,
+        vol.Required(CONF_PASSWORD): cv.string,
+        vol.Required(CONF_IMPORT_GROUPS, default=True): cv.boolean,
+        vol.Required(CONF_VERTICAL_AS_COVER, default=False): cv.boolean,
+    }
+)
+
+# Settings asked at setup that the options flow can change later, with
+# the defaults of the setup form (older entries may lack them in data).
+_USER_FLAGS = {CONF_IMPORT_GROUPS: True, CONF_VERTICAL_AS_COVER: False}
+
+REAUTH_SCHEMA: Any = vol.Schema(
+    {
+        vol.Required(CONF_PASSWORD): cv.string,
+    }
+)
+
+
+async def _validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, str]:
+    """Validate the user input allows us to connect.
+
+    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
+
+    The connection is tried on a fresh cache of its own, so that a network
+    changed in the app is seen and a failed attempt (a wrong password, the
+    proxy dropping out) leaves the entry's cache alone: a reauth or
+    reconfigure that fails must not take away what the running entry falls
+    back on when the cloud is down. Only a network that answered gets its
+    cache cleared, for the entry to load it fresh.
+    """
+    client = get_async_client(hass)
+    bt_device = async_ble_device_from_address(
+        hass, data[CONF_ADDRESS], connectable=True
+    )
+
+    if not bt_device:
+        raise NetworkNotFoundError
+
+    scratch = await hass.async_add_executor_job(mkdtemp, None, f"{DOMAIN}-")
+    try:
+        casa = Casambi(client, Path(scratch) / "cache")
+        await casa.connect(bt_device, data[CONF_PASSWORD])
+
+        network_name = casa.networkName
+
+        # We need to disconnect again because otherwise setup will fail
+        await casa.disconnect()
+    finally:
+        await hass.async_add_executor_job(
+            partial(shutil.rmtree, scratch, ignore_errors=True)
+        )
+
+    await Casambi(client, get_cache_dir(hass)).invalidateCache(bt_device.address)
+
+    # Return info that you want to store in the config entry.
+    return {"title": network_name, "id": data[CONF_ADDRESS]}
+
+
+async def _async_try_connect(
+    hass: HomeAssistant, data: dict[str, Any]
+) -> tuple[dict[str, str] | None, dict[str, str]]:
+    """Connect with the entered data; return the network info or a form error."""
+    if len(data[CONF_ADDRESS]) != 17:
+        return None, {"base": "invalid_address"}
+    try:
+        info = await _validate_input(hass, data)
+    except Exception as err:  # pylint: disable=broad-except
+        if cloud_outage(err) or isinstance(
+            err,
+            (
+                *LINK_ERRORS,
+                BluetoothDeviceNotFoundError,
+                NetworkNotFoundError,
+                ProtocolError,
+            ),
+        ):
+            # The network, the radio or the cloud failed: trying again
+            # later can work, and a cloud outage is no wrong password.
+            _LOGGER.debug("Could not connect to %s", data[CONF_ADDRESS], exc_info=True)
+            return None, {"base": "cannot_connect"}
+        if isinstance(err, AuthenticationError):
+            return None, {"base": "invalid_auth"}
+        _LOGGER.exception("Unexpected exception")
+        return None, {"base": "unknown"}
+    return info, {}
+
+
+class OptionsFlow(config_entries.OptionsFlowWithReload):
+    """Handle an options flow for Casambi Bluetooth.
+
+    Home Assistant reloads the entry once the options are saved.
+    """
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Manage the options."""
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+
+        schema: Any = vol.Schema(
+            {
+                vol.Required(
+                    CONF_IMPORT_GROUPS,
+                    default=entry_option(self.config_entry, CONF_IMPORT_GROUPS, True),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_VERTICAL_AS_COVER,
+                    default=entry_option(
+                        self.config_entry, CONF_VERTICAL_AS_COVER, False
+                    ),
+                ): cv.boolean,
+                vol.Required(
+                    CONF_LOUVRE_AZIMUTH,
+                    default=entry_option(
+                        self.config_entry, CONF_LOUVRE_AZIMUTH, DEFAULT_LOUVRE_AZIMUTH
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=0, max=359)),
+                vol.Required(
+                    CONF_WIND_THRESHOLD,
+                    default=entry_option(
+                        self.config_entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
+                    ),
+                ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
+                vol.Required(
+                    CONF_FROST_LOCK_TEMPERATURE,
+                    default=entry_option(
+                        self.config_entry,
+                        CONF_FROST_LOCK_TEMPERATURE,
+                        DEFAULT_FROST_LOCK_TEMPERATURE,
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=-10, max=10)),
+                vol.Optional(
+                    CONF_TEMPERATURE_ENTITY,
+                    description={
+                        "suggested_value": entry_option(
+                            self.config_entry, CONF_TEMPERATURE_ENTITY, None
+                        )
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor", device_class="temperature"
+                    )
+                ),
+                vol.Optional(
+                    CONF_RAIN_ENTITY,
+                    description={
+                        "suggested_value": entry_option(
+                            self.config_entry, CONF_RAIN_ENTITY, None
+                        )
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain=["binary_sensor", "sensor", "weather"]
+                    )
+                ),
+                vol.Optional(
+                    CONF_WIND_ENTITY,
+                    description={
+                        "suggested_value": entry_option(
+                            self.config_entry, CONF_WIND_ENTITY, None
+                        )
+                    },
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain="sensor", device_class="wind_speed"
+                    )
+                ),
+            }
+        )
+        return self.async_show_form(step_id="init", data_schema=schema)
+
+
+class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+    """Handle a config flow for Casambi Bluetooth."""
+
+    discovery_info: BluetoothServiceInfoBleak | None = None
+
+    VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(
+        config_entry: config_entries.ConfigEntry,
+    ) -> OptionsFlow:
+        """Create the options flow."""
+        return OptionsFlow()
+
+    async def async_step_bluetooth(
+        self, discovery_info: BluetoothServiceInfoBleak
+    ) -> ConfigFlowResult:
+        """Handle bluetooth discovery."""
+        self.discovery_info = discovery_info
+
+        if not discovery_info.connectable:
+            return self.async_abort(reason="not_supported")
+
+        await self.async_set_unique_id(discovery_info.address)
+        self._abort_if_unique_id_configured()
+
+        _LOGGER.debug(
+            "Discovery: [%s] %s from %s. Advertisement: %s.",
+            discovery_info.address,
+            discovery_info.name,
+            discovery_info.source,
+            discovery_info.advertisement,
+        )
+
+        return self.async_show_form(step_id="network")
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle a flow started by the user."""
+        return await self.async_step_network(user_input)
+
+    async def async_step_network(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle entry of network information and attempt to connect."""
+
+        suggested_input = {}
+        if self.discovery_info:
+            suggested_input[CONF_ADDRESS] = self.discovery_info.address
+
+        if async_scanner_count(self.hass, connectable=True) < 1:
+            return self.async_abort(reason="bluetooth_error")
+
+        if user_input:
+            user_input[CONF_ADDRESS] = format_mac(user_input[CONF_ADDRESS]).upper()
+            # Before connecting: validating would wipe a configured entry's
+            # network cache and open a second link next to its own. An
+            # ignored entry doesn't count and is replaced; a configured one
+            # is changed with reauth or reconfigure.
+            await self.async_set_unique_id(user_input[CONF_ADDRESS])
+            self._abort_if_unique_id_configured()
+            info, errors = await _async_try_connect(self.hass, user_input)
+            if info is not None:
+                return self.async_create_entry(title=info["title"], data=user_input)
+
+            return self.async_show_form(
+                step_id="network",
+                data_schema=self.add_suggested_values_to_schema(
+                    USER_SCHEMA, user_input
+                ),
+                errors=errors,
+            )
+
+        return self.async_show_form(
+            step_id="network",
+            data_schema=self.add_suggested_values_to_schema(
+                USER_SCHEMA, suggested_input
+            ),
+        )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Handle reconfiguration of an existing entry."""
+        entry = self._get_reconfigure_entry()
+
+        if user_input:
+            user_input[CONF_ADDRESS] = format_mac(user_input[CONF_ADDRESS]).upper()
+            info, errors = await _async_try_connect(self.hass, user_input)
+            if info is not None:
+                if info["id"] != entry.unique_id:
+                    return self.async_abort(reason="wrong_network")
+                # The two flags are also options, which take precedence
+                # over the entry data once the options flow has been used.
+                return self.async_update_reload_and_abort(
+                    entry,
+                    title=info["title"],
+                    data={**entry.data, **user_input},
+                    options={
+                        **entry.options,
+                        **{key: user_input[key] for key in _USER_FLAGS},
+                    },
+                    reason="reconfigure_successful",
+                )
+
+            return self.async_show_form(
+                step_id="reconfigure",
+                data_schema=self.add_suggested_values_to_schema(
+                    USER_SCHEMA, user_input
+                ),
+                errors=errors,
+            )
+
+        current = {
+            **entry.data,
+            **{
+                key: entry_option(entry, key, default)
+                for key, default in _USER_FLAGS.items()
+            },
+        }
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=self.add_suggested_values_to_schema(USER_SCHEMA, current),
+        )
+
+    async def async_step_reauth(
+        self, _entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
+        """Handle re-authentication with Casambi."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Confirm re-authentication with Casambi."""
+        errors: dict[str, str] = {}
+        entry = self._get_reauth_entry()
+
+        if user_input:
+            data = {**entry.data, **user_input}
+            info, errors = await _async_try_connect(self.hass, data)
+            if info is not None:
+                return self.async_update_reload_and_abort(
+                    entry, data=data, reason="reauth_successful"
+                )
+
+        # The stored password is the one that was refused: don't send it to
+        # the browser as a suggestion.
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=REAUTH_SCHEMA,
+            errors=errors,
+        )

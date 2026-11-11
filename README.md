@@ -15,6 +15,9 @@
 
 The rest of this page documents the fork for my own reference.
 
+> [!NOTE]
+> [`casambi-ng/`](casambi-ng/) holds a rewrite of this integration with the same behaviour and a cleaner structure. It is not what HACS installs; see its README to try it.
+
 ## Tested hardware
 
 > [!CAUTION]
