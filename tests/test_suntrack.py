@@ -101,7 +101,7 @@ async def test_sun_tracking_logs_a_failed_move(
     mock_casambi.setSlider.side_effect = BluetoothError
 
     with patch(
-        "custom_components.casambi_bt.switch.get_sun_position",
+        "custom_components.casambi_bt.sun_tracking.get_sun_position",
         return_value=(45.0, 180.0),
     ):
         await hass.services.async_call(
@@ -142,7 +142,7 @@ async def test_sun_tracking_switch(
     # Sun at 45 deg elevation due south; default south-facing pergola:
     # angle 45 deg -> raw round(45 / 142 * 255) = 81.
     with patch(
-        "custom_components.casambi_bt.switch.get_sun_position",
+        "custom_components.casambi_bt.sun_tracking.get_sun_position",
         return_value=(45.0, 180.0),
     ):
         await hass.services.async_call(
@@ -166,7 +166,7 @@ async def test_sun_tracking_switch(
     mock_casambi.setSlider.reset_mock()
 
     with patch(
-        "custom_components.casambi_bt.switch.get_sun_position",
+        "custom_components.casambi_bt.sun_tracking.get_sun_position",
         return_value=(45.0, 180.0),
     ):
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=6))
@@ -186,7 +186,7 @@ async def test_sun_tracking_switch(
     )
     mock_casambi.setSlider.reset_mock()
     with patch(
-        "custom_components.casambi_bt.switch.get_sun_position",
+        "custom_components.casambi_bt.sun_tracking.get_sun_position",
         return_value=(45.0, 180.0),
     ):
         async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=12))
@@ -217,7 +217,7 @@ async def test_sun_tracking_deadband(
     # deadband (raw 130 -> angle ~72.4 deg) must not move the motor.
     # angle = raw * 142 / 255 -> 130 raw = 72.39 deg; profile = 90 - 72.39.
     with patch(
-        "custom_components.casambi_bt.switch.get_sun_position",
+        "custom_components.casambi_bt.sun_tracking.get_sun_position",
         return_value=(17.61, 180.0),
     ):
         await hass.services.async_call(

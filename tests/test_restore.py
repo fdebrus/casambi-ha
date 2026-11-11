@@ -68,9 +68,14 @@ async def test_settings_restored_from_an_outage(
             STATE_OFF if entity_id == "switch.frost" else STATE_ON
         ), entity_id
     # The settings took effect, not just the state.
-    api = mock_config_entry.runtime_data
-    assert api.temp_control[WINSOL_LOUVRE_UUID] is True
-    assert api.frost_lock[WINSOL_LOUVRE_UUID] is False
+    assert (
+        mock_config_entry.runtime_data.pergola.settings[WINSOL_LOUVRE_UUID].temp_control
+        is True
+    )
+    assert (
+        mock_config_entry.runtime_data.pergola.settings[WINSOL_LOUVRE_UUID].frost_lock
+        is False
+    )
 
 
 async def test_settings_restored_from_the_state_alone(

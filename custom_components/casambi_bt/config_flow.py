@@ -33,7 +33,6 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.httpx_client import get_async_client
 
-from . import LINK_ERRORS, cloud_outage, get_cache_dir
 from .const import (
     CONF_FROST_LOCK_TEMPERATURE,
     CONF_IMPORT_GROUPS,
@@ -49,6 +48,7 @@ from .const import (
     DOMAIN,
     entry_option,
 )
+from .library import LINK_ERRORS, cloud_outage, get_cache_dir
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -149,10 +149,6 @@ class OptionsFlow(config_entries.OptionsFlowWithReload):
     Home Assistant reloads the entry once the options are saved.
     """
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        """Initialize the options flow."""
-        self._entry = config_entry
-
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -164,28 +160,30 @@ class OptionsFlow(config_entries.OptionsFlowWithReload):
             {
                 vol.Required(
                     CONF_IMPORT_GROUPS,
-                    default=entry_option(self._entry, CONF_IMPORT_GROUPS, True),
+                    default=entry_option(self.config_entry, CONF_IMPORT_GROUPS, True),
                 ): cv.boolean,
                 vol.Required(
                     CONF_VERTICAL_AS_COVER,
-                    default=entry_option(self._entry, CONF_VERTICAL_AS_COVER, False),
+                    default=entry_option(
+                        self.config_entry, CONF_VERTICAL_AS_COVER, False
+                    ),
                 ): cv.boolean,
                 vol.Required(
                     CONF_LOUVRE_AZIMUTH,
                     default=entry_option(
-                        self._entry, CONF_LOUVRE_AZIMUTH, DEFAULT_LOUVRE_AZIMUTH
+                        self.config_entry, CONF_LOUVRE_AZIMUTH, DEFAULT_LOUVRE_AZIMUTH
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=0, max=359)),
                 vol.Required(
                     CONF_WIND_THRESHOLD,
                     default=entry_option(
-                        self._entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
+                        self.config_entry, CONF_WIND_THRESHOLD, DEFAULT_WIND_THRESHOLD
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
                 vol.Required(
                     CONF_FROST_LOCK_TEMPERATURE,
                     default=entry_option(
-                        self._entry,
+                        self.config_entry,
                         CONF_FROST_LOCK_TEMPERATURE,
                         DEFAULT_FROST_LOCK_TEMPERATURE,
                     ),
@@ -194,7 +192,7 @@ class OptionsFlow(config_entries.OptionsFlowWithReload):
                     CONF_TEMPERATURE_ENTITY,
                     description={
                         "suggested_value": entry_option(
-                            self._entry, CONF_TEMPERATURE_ENTITY, None
+                            self.config_entry, CONF_TEMPERATURE_ENTITY, None
                         )
                     },
                 ): selector.EntitySelector(
@@ -206,7 +204,7 @@ class OptionsFlow(config_entries.OptionsFlowWithReload):
                     CONF_RAIN_ENTITY,
                     description={
                         "suggested_value": entry_option(
-                            self._entry, CONF_RAIN_ENTITY, None
+                            self.config_entry, CONF_RAIN_ENTITY, None
                         )
                     },
                 ): selector.EntitySelector(
@@ -218,7 +216,7 @@ class OptionsFlow(config_entries.OptionsFlowWithReload):
                     CONF_WIND_ENTITY,
                     description={
                         "suggested_value": entry_option(
-                            self._entry, CONF_WIND_ENTITY, None
+                            self.config_entry, CONF_WIND_ENTITY, None
                         )
                     },
                 ): selector.EntitySelector(
@@ -244,7 +242,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> OptionsFlow:
         """Create the options flow."""
-        return OptionsFlow(config_entry)
+        return OptionsFlow()
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -317,8 +315,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Handle reconfiguration of an existing entry."""
-        entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
-        assert entry is not None
+        entry = self._get_reconfigure_entry()
 
         if user_input:
             user_input[CONF_ADDRESS] = format_mac(user_input[CONF_ADDRESS]).upper()
@@ -363,7 +360,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, _entry_data: Mapping[str, Any]
     ) -> ConfigFlowResult:
         """Handle re-authentication with Casambi."""
-        self.entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         return await self.async_step_reauth_confirm()
 
     async def async_step_reauth_confirm(
@@ -371,17 +367,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Confirm re-authentication with Casambi."""
         errors: dict[str, str] = {}
-        assert self.entry is not None
+        entry = self._get_reauth_entry()
 
         if user_input:
-            data = {
-                **self.entry.data,
-                **user_input,
-            }
+            data = {**entry.data, **user_input}
             info, errors = await _async_try_connect(self.hass, data)
             if info is not None:
                 return self.async_update_reload_and_abort(
-                    self.entry, data=data, reason="reauth_successful"
+                    entry, data=data, reason="reauth_successful"
                 )
 
         # The stored password is the one that was refused: don't send it to

@@ -6,6 +6,8 @@ and the time. Positions are raw (0-255).
 
 from dataclasses import dataclass
 
+import pytest
+
 from custom_components.casambi_bt.motor_model import (
     BitRun,
     LouvreModel,
@@ -14,7 +16,6 @@ from custom_components.casambi_bt.motor_model import (
     SetBit,
     SetPosition,
 )
-import pytest
 
 
 @dataclass

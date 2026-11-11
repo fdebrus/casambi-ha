@@ -1,22 +1,9 @@
-"""Support for Casambi environment sensor platforms (e.g. Sensor Platform V4).
+"""Sensors: the readings of sensor platforms and of louvre motors.
 
-EXT/Elements sensor platforms broadcast their readings as rotating state
-packets, decoded by ``platform_packets`` (first reverse-engineered by the
-https://github.com/superkikim/casambi-bt-hass fork):
-
-- packet 1: wind speed (km/h)
-- packet 2: solar radiation
-- packet 4: rain (0 = dry, 1 = raining) - exposed as binary sensor
-- packet 3: PIR presence - exposed as binary sensor
-
-Additionally the platform reports lux (12 bit) and presence (2 bit) as
-first-class controls parsed into the unit state.
-
-Winsol louvre motors multiplex four sensor channels of their own into
-their 5-byte state (bits 0-3 select the channel, bits 4-27 carry its
-24-bit value). The Casambi fixture definition of the Winsol Lamel
-Standard V4.1 (fixture 38915) names them by tag, channel = tag + 1:
-Temperatuur (°C), #Overcurrent, Travel Distance and Module State.
+A sensor platform (e.g. Sensor Platform V4) broadcasts wind speed and
+solar radiation as rotating packets (see ``platform_packets``) and lux as
+a control of its own. A Winsol louvre motor multiplexes four sensor
+channels into its state (see ``louvre_channels``).
 """
 
 from __future__ import annotations
@@ -42,13 +29,11 @@ from homeassistant.const import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import CasambiApi, CasambiConfigEntry
-from .classify import UnitKind, classify_unit
-from .entities import (
-    CasambiBroadcastUnitEntity,
-    CasambiUnitEntity,
-    TypedEntityDescription,
-)
+from .classify import UnitKind
+from .entity import CasambiBroadcastUnitEntity, CasambiUnitEntity
+from .hub import CasambiHub
+from .louvre_channels import decode_channel, louvre_temperature
+from .models import CasambiConfigEntry
 from .platform_packets import PACKET_SOLAR, PACKET_WIND
 
 _LOGGER = logging.getLogger(__name__)
@@ -56,104 +41,102 @@ _LOGGER = logging.getLogger(__name__)
 # State is pushed by the Casambi network, no coordinated polling is required.
 PARALLEL_UPDATES = 0
 
+# The channels of a louvre motor, from the fixture definition (sensor tag =
+# channel - 1). Confirmed on a Winsol SO! Climate pergola: the temperature
+# followed the outdoor temperature (14 °C against 12.1 °C at night), Travel
+# Distance rose with every louvre movement (20 -> 31 in an evening),
+# #Overcurrent stayed 0 and Module State read 50.
+LOUVRE_CHANNELS: Final[dict[int, SensorEntityDescription]] = {
+    1: SensorEntityDescription(
+        key="louvre_temperature",
+        translation_key="louvre_temperature",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    2: SensorEntityDescription(
+        key="louvre_overcurrent",
+        translation_key="louvre_overcurrent",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    3: SensorEntityDescription(
+        key="louvre_travel_distance",
+        translation_key="louvre_travel_distance",
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    4: SensorEntityDescription(
+        key="louvre_module_state",
+        translation_key="louvre_module_state",
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+}
 
-# Louvre state layout: a 4-bit channel header followed by a 24-bit value.
-LOUVRE_HEADER_BITS: Final = 4
-LOUVRE_VALUE_BITS: Final = 24
+# A channel the fixture doesn't name stays a raw diagnostic value.
+UNKNOWN_LOUVRE_CHANNEL: Final = SensorEntityDescription(
+    key="louvre_channel",
+    translation_key="louvre_channel",
+    state_class=SensorStateClass.MEASUREMENT,
+    entity_category=EntityCategory.DIAGNOSTIC,
+)
 
 
 @dataclass(frozen=True, kw_only=True)
-class LouvreChannel:
-    """How one named sensor channel of a louvre motor is exposed."""
+class PacketSensorDescription(SensorEntityDescription):
+    """A reading a sensor platform sends as one of its rotating packets."""
 
-    key: str
-    device_class: SensorDeviceClass | None = None
-    unit: str | None = None
-    state_class: SensorStateClass = SensorStateClass.MEASUREMENT
-    category: EntityCategory | None = EntityCategory.DIAGNOSTIC
+    packet: int
 
 
-# From the fixture definition (sensor tag = channel - 1). Confirmed on a
-# Winsol SO! Climate pergola: the temperature followed the outdoor
-# temperature (14 °C against 12.1 °C at night), Travel Distance rose with
-# every louvre movement (20 -> 31 in an evening), #Overcurrent stayed 0
-# and Module State read 50.
-LOUVRE_CHANNELS: Final[dict[int, LouvreChannel]] = {
-    1: LouvreChannel(
-        key="louvre_temperature",
-        device_class=SensorDeviceClass.TEMPERATURE,
-        unit=UnitOfTemperature.CELSIUS,
-        category=None,
+PACKET_SENSORS: Final = (
+    PacketSensorDescription(
+        key="wind",
+        translation_key="wind",
+        packet=PACKET_WIND,
+        device_class=SensorDeviceClass.WIND_SPEED,
+        native_unit_of_measurement=UnitOfSpeed.KILOMETERS_PER_HOUR,
+        state_class=SensorStateClass.MEASUREMENT,
     ),
-    2: LouvreChannel(
-        key="louvre_overcurrent",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+    PacketSensorDescription(
+        key="solar",
+        translation_key="solar",
+        packet=PACKET_SOLAR,
+        state_class=SensorStateClass.MEASUREMENT,
     ),
-    3: LouvreChannel(
-        key="louvre_travel_distance",
-        state_class=SensorStateClass.TOTAL_INCREASING,
-    ),
-    4: LouvreChannel(key="louvre_module_state"),
-}
-
-
-# A louvre motor's own temperature: outside this range a reading is not
-# a temperature but an encoding the captures haven't shown yet.
-LOUVRE_TEMPERATURE_RANGE: Final = (-40, 85)
-
-
-def louvre_temperature(value: int) -> int | None:
-    """Return the °C a louvre's 24-bit temperature channel carries.
-
-    Only readings above 0 °C have been captured. Below zero the value is
-    read as two's complement; anything else implausible is dropped rather
-    than recorded (and taken by the frost lock) as hundreds of degrees.
-    """
-    if value & 1 << (LOUVRE_VALUE_BITS - 1):
-        value -= 1 << LOUVRE_VALUE_BITS
-    low, high = LOUVRE_TEMPERATURE_RANGE
-    return value if low <= value <= high else None
-
-
-def decode_louvre_channel(raw: bytes | None) -> tuple[int, int] | None:
-    """Return the (channel, value) multiplexed into a louvre state."""
-    if raw is None or len(raw) * 8 < LOUVRE_HEADER_BITS + LOUVRE_VALUE_BITS:
-        return None
-    packed = int.from_bytes(raw, "little")
-    channel = packed & ((1 << LOUVRE_HEADER_BITS) - 1)
-    value = (packed >> LOUVRE_HEADER_BITS) & ((1 << LOUVRE_VALUE_BITS) - 1)
-    return channel, value
-
-
-class TypedSensorEntityDescription(TypedEntityDescription, SensorEntityDescription):
-    """Describes a Casambi sensor entity."""
+)
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: CasambiConfigEntry,
+    entry: CasambiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create sensor entities for Casambi sensor platforms."""
-    casa_api = config_entry.runtime_data
+    """Create the sensor entities."""
+    hub = entry.runtime_data.hub
 
     entities: list[SensorEntity] = []
-    for unit in casa_api.get_units():
-        kind = classify_unit(unit)
+    for unit in hub.get_units():
+        kind = hub.kind(unit)
         if kind is UnitKind.SENSOR_PLATFORM:
             _LOGGER.debug("Creating environment sensors for unit %s", unit.name)
-            entities.append(CasambiWindSensor(casa_api, unit))
-            entities.append(CasambiSolarSensor(casa_api, unit))
+            entities.extend(
+                CasambiPacketSensor(hub, unit, description)
+                for description in PACKET_SENSORS
+            )
             if unit.unitType.get_control(UnitControlType.LUX) is not None:
-                entities.append(CasambiLuxSensor(casa_api, unit))
+                entities.append(CasambiLuxSensor(hub, unit))
         elif kind is UnitKind.LOUVRE:
-            # One raw channel per SENSOR control the motor declares; the
+            # One channel per SENSOR control the motor declares; the
             # channel headers on the wire count from 1.
             channels = sum(
-                1 for c in unit.unitType.controls if c.type == UnitControlType.SENSOR
+                1
+                for control in unit.unitType.controls
+                if control.type == UnitControlType.SENSOR
             )
             entities.extend(
-                CasambiLouvreChannelSensor(casa_api, unit, channel)
+                CasambiLouvreChannelSensor(hub, unit, channel)
                 for channel in range(1, channels + 1)
             )
 
@@ -165,64 +148,47 @@ class CasambiLouvreChannelSensor(CasambiUnitEntity, SensorEntity):
 
     The motor rotates through its channels every few seconds; this entity
     keeps the last value seen for its own channel and ignores the others.
-    Known channels get their fixture name and meaning; any other channel
-    stays a raw diagnostic value.
     """
 
-    def __init__(self, api: CasambiApi, unit: Unit, channel: int) -> None:
+    def __init__(self, hub: CasambiHub, unit: Unit, channel: int) -> None:
         """Initialize a channel sensor."""
-        spec = LOUVRE_CHANNELS.get(channel) or LouvreChannel(key="louvre_channel")
         # The unique id keeps the channel number so history survives renames.
-        desc = TypedSensorEntityDescription(
-            key=unit.uuid, entity_type=f"channel-{channel}", translation_key=spec.key
-        )
-        self._obj: Unit
-        super().__init__(api, desc, unit)
-        self._channel = channel
-        if spec.key == "louvre_channel":
+        super().__init__(hub, unit, f"channel-{channel}")
+        self.entity_description = LOUVRE_CHANNELS.get(channel, UNKNOWN_LOUVRE_CHANNEL)
+        if self.entity_description is UNKNOWN_LOUVRE_CHANNEL:
             self._attr_translation_placeholders = {"channel": str(channel)}
-        self._attr_device_class = spec.device_class
-        self._attr_native_unit_of_measurement = spec.unit
-        self._attr_state_class = spec.state_class
-        self._attr_entity_category = spec.category
-        self._value: int | None = None
+        self._channel = channel
+        self._attr_native_value = None
         self._apply_update(unit)
 
     @callback
     def _apply_update(self, unit: Unit) -> None:
         """Pick up the value if the pushed state carries this channel."""
         state = unit.state
-        decoded = decode_louvre_channel(state.raw_state if state else None)
+        decoded = decode_channel(state.raw_state if state else None)
         if decoded is None or decoded[0] != self._channel:
             return
-        if self._attr_device_class is SensorDeviceClass.TEMPERATURE:
-            self._value = louvre_temperature(decoded[1])
+        if self.device_class is SensorDeviceClass.TEMPERATURE:
+            self._attr_native_value = louvre_temperature(decoded[1])
         else:
-            self._value = decoded[1]
+            self._attr_native_value = decoded[1]
 
     def _snapshot(self) -> object:
         """Write only when this channel's value or availability changed."""
-        return (self._value, self.available)
-
-    @property
-    def native_value(self) -> int | None:
-        """Return the last value seen on this channel."""
-        return self._value
+        return (self._attr_native_value, self.available)
 
 
 class CasambiPacketSensor(CasambiBroadcastUnitEntity, SensorEntity):
-    """A multiplexed environment reading of a Casambi sensor platform."""
+    """A reading of a sensor platform sent as a rotating packet."""
 
-    _attr_state_class = SensorStateClass.MEASUREMENT
-    _packet_type: int
+    entity_description: PacketSensorDescription
 
-    def __init__(self, api: CasambiApi, unit: Unit, entity_type: str) -> None:
-        """Initialize an environment sensor entity."""
-        desc = TypedSensorEntityDescription(
-            key=unit.uuid, entity_type=entity_type, translation_key=entity_type
-        )
-        self._obj: Unit
-        super().__init__(api, desc, unit)
+    def __init__(
+        self, hub: CasambiHub, unit: Unit, description: PacketSensorDescription
+    ) -> None:
+        """Initialize a packet sensor."""
+        super().__init__(hub, unit, description.key)
+        self.entity_description = description
 
     def _snapshot(self) -> object:
         """Write only when this reading or availability changed."""
@@ -231,46 +197,21 @@ class CasambiPacketSensor(CasambiBroadcastUnitEntity, SensorEntity):
     @property
     def native_value(self) -> float | None:
         """Return the latest reading of this packet."""
-        value = self._api.platform_reading(self._obj, self._packet_type)
+        value = self.hub.platform_reading(self._unit, self.entity_description.packet)
         return None if value is None else float(value)
 
 
-class CasambiWindSensor(CasambiPacketSensor):
-    """The wind speed reading of a Casambi sensor platform."""
-
-    _attr_device_class = SensorDeviceClass.WIND_SPEED
-    _attr_native_unit_of_measurement = UnitOfSpeed.KILOMETERS_PER_HOUR
-    _packet_type = PACKET_WIND
-
-    def __init__(self, api: CasambiApi, unit: Unit) -> None:
-        """Initialize a wind speed sensor entity."""
-        super().__init__(api, unit, "wind")
-
-
-class CasambiSolarSensor(CasambiPacketSensor):
-    """The solar radiation reading of a Casambi sensor platform."""
-
-    _packet_type = PACKET_SOLAR
-
-    def __init__(self, api: CasambiApi, unit: Unit) -> None:
-        """Initialize a solar radiation sensor entity."""
-        super().__init__(api, unit, "solar")
-
-
 class CasambiLuxSensor(CasambiBroadcastUnitEntity, SensorEntity):
-    """The illuminance reading of a Casambi sensor platform."""
+    """The illuminance reading of a sensor platform."""
 
     _attr_device_class = SensorDeviceClass.ILLUMINANCE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = LIGHT_LUX
+    _attr_translation_key = "illuminance"
 
-    def __init__(self, api: CasambiApi, unit: Unit) -> None:
-        """Initialize an illuminance sensor entity."""
-        desc = TypedSensorEntityDescription(
-            key=unit.uuid, entity_type="illuminance", translation_key="illuminance"
-        )
-        self._obj: Unit
-        super().__init__(api, desc, unit)
+    def __init__(self, hub: CasambiHub, unit: Unit) -> None:
+        """Initialize an illuminance sensor."""
+        super().__init__(hub, unit, "illuminance")
 
     def _snapshot(self) -> object:
         """Write only when the illuminance or availability changed."""
@@ -279,7 +220,5 @@ class CasambiLuxSensor(CasambiBroadcastUnitEntity, SensorEntity):
     @property
     def native_value(self) -> int | None:
         """Return the current illuminance."""
-        unit = self._obj
-        if unit.state is not None:
-            return unit.state.lux
-        return None
+        state = self._unit.state
+        return None if state is None else state.lux

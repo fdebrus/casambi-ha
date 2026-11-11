@@ -4,11 +4,43 @@ This document explains how the fork is built and tested, what has been decoded a
 
 ## Architecture
 
-The integration is `local_push`: the `casambi-bt` library keeps a BLE connection to the network open and pushes unit state changes via callbacks. `CasambiApi` (in `__init__.py`) owns the connection, handles automatic reconnects, and fans out per-unit change callbacks that entities subscribe to in `async_added_to_hass`.
+The integration is `local_push`: the `casambi-bt` library keeps a BLE connection to the network open and pushes unit state changes via callbacks. `CasambiHub` (in `hub.py`) owns the connection, handles automatic reconnects, and fans out per-unit change callbacks that entities subscribe to in `async_added_to_hass`. A subscription returns its unsubscribe callback, which the entity hands to `async_on_remove`.
 
-**Why is there no `DataUpdateCoordinator`?** The coordinator pattern exists to centralize *polling* so that many entities share one fetch cycle. This integration never polls — state arrives as push callbacks from the BLE mesh — so a coordinator would add indirection without benefit. `CasambiApi` already fulfils the coordinator's other role (a single shared connection/state owner). All entity platforms therefore declare `PARALLEL_UPDATES = 0` and `should_poll = False`.
+```
+custom_components/casambi_bt/
+  __init__.py        setup and unload
+  hub.py             the Bluetooth link: connect, reconnect, pushes, commands
+  library.py         what is known about casambi-bt beyond its public API
+  switch_decoder.py  wall button frames of input-only modules
+  classify.py        what kind of hardware a unit is
+  louvre_channels.py platform_packets.py   decoding of raw states
+  motor_model.py     how louvres and screens move (pure Python)
+  motor.py           one motor: unit + model + timer + commands
+  pergola.py         automation settings, frost lock, weather lock
+  weather.py         weather protection
+  sun_tracking.py    sun tracking;  suntrack.py: its geometry
+  entity.py          entity base classes
+  cover.py light.py switch.py number.py sensor.py binary_sensor.py
+  event.py scene.py  the platforms
+  config_flow.py diagnostics.py
+```
 
-**State writes.** A unit pushes its whole state several times a minute — the louvre motor cycles through its four sensor channels every few seconds — and every entity of the unit is notified each time. `CasambiUnitEntity._change_callback` therefore writes to Home Assistant only when the entity's `_snapshot()` differs from what it last wrote: a channel sensor returns its value, a relay its bit, the automation switches and dials (`CasambiUnitConfigEntity`) only their availability, since their value is not in the pushed state. Entities that show the whole state (covers, lights) keep the default and write on every push. Entities that need to decode a push before deciding override `_apply_update()` rather than `_change_callback`.
+**Where the logic lives.** The entities show state and pass commands on; what the pergola does is kept out of them:
+
+- `motor_model.py` holds how a louvre or screen moves, as plain Python with no Home Assistant in it: fed the unit's state and the time, a `LouvreModel` or `ScreenModel` says where the motor is and returns a `Plan` of what to send. `tests/test_models.py` replays captures on it directly.
+- `motor.py` gives each louvre and screen a `Motor`: the unit, its model, the one-second timer that refreshes the estimate while it moves, and the commands. A `Motor` exists whether or not the unit's cover entity is enabled, so the weather protection always knows where a motor rests and can send it to safety.
+- `pergola.py` (`PergolaController`) holds the per-louvre settings and the locks, `weather.py` the weather protection and `sun_tracking.py` the sun tracking. The switch and number entities only turn them on and set their values.
+- `library.py` and `switch_decoder.py` are the only places that reach into casambi-bt beyond its public API.
+
+Everything the entry owns hangs off `entry.runtime_data` (`CasambiData`: the hub, the pergola controller and the motors).
+
+Version 1.0.0 is this structure. Up to 0.31.0 the connection, a proxy around the library and the automations' shared state lived in `__init__.py`, the motion logic in the cover entities and the automations in the switch entities. The entities, their unique ids and the behaviour are the same, with one exception: a motor whose cover entity is disabled keeps its motion model, where the weather protection used to fall back to its reported position.
+
+**Why is there no `DataUpdateCoordinator`?** The coordinator pattern exists to centralize *polling* so that many entities share one fetch cycle. This integration never polls — state arrives as push callbacks from the BLE mesh — so a coordinator would add indirection without benefit. `CasambiHub` already fulfils the coordinator's other role (a single shared connection/state owner). All entity platforms therefore declare `PARALLEL_UPDATES = 0` and `should_poll = False`.
+
+**State writes.** A unit pushes its whole state several times a minute — the louvre motor cycles through its four sensor channels every few seconds — and every entity of the unit is notified each time. `CasambiUnitEntity._handle_update` therefore writes to Home Assistant only when the entity's `_snapshot()` differs from what it last wrote: a channel sensor returns its value, a relay its bit, the automation switches and dials (`CasambiUnitConfigEntity`) only their availability, since their value is not in the pushed state. Entities that show the whole state (lights, the vertical covers) keep the default and write on every push. Entities that need to decode a push before deciding override `_apply_update()` rather than `_handle_update`. The louvre and screen covers do not listen to the unit at all: their `Motor` takes the push in first and then tells them.
+
+**Not done yet.** The louvres' travel time is a constant (22 s, a parameter of `LouvreModel`); the motor clears its bit at the end of a full run, which would give the real time. A screen was seen to follow a new target during a button run; `ScreenModel` still ignores one. The private attributes of casambi-bt that `library.py` reads are needed until the library releases a stale client itself.
 
 The integration status against the Home Assistant [integration quality scale](https://developers.home-assistant.io/docs/core/integration-quality-scale/) is tracked in `custom_components/casambi_bt/quality_scale.yaml`.
 
@@ -20,7 +52,7 @@ operation, not an error.
 
 * **One reconnect task.** A disconnect callback from the library, or a
   bluetooth advertisement for a network we are not connected to, calls
-  `_schedule_reconnect()`. It starts `CasambiApi.reconnect()` as a single
+  `_schedule_reconnect()`. It starts `CasambiHub._reconnect()` as a single
   background task and never starts a second one while it runs, so
   simultaneous triggers cannot stack up connection attempts. An
   advertisement that arrives while the task waits out its backoff ends the
@@ -48,7 +80,7 @@ operation, not an error.
   the key exchange, and bleak-esphome reports a GATT timeout through a
   proxy as a bare `TimeoutError` that the library lets through
   (`LINK_ERRORS`). Both are retried like bluetooth errors, at setup
-  (`ConfigEntryNotReady`), in the reconnect loop and in the proxy. Any
+  (`ConfigEntryNotReady`), in the reconnect loop and in `async_command`. Any
   other unexpected error keeps the loop going at `RECONNECT_BACKOFF_MAX`,
   its traceback logged once, and leaves setup retrying rather than failed
   for good: with the task gone only an advertisement could start a new
@@ -60,8 +92,8 @@ operation, not an error.
   (`cloud_outage()`) is retried once with `forceOffline=True`, which
   connects from the cached network; a network the cloud says it doesn't
   know is believed.
-* **Writes trigger reconnects.** Entities reach the library through
-  `CasambiProxy`, which wraps every coroutine call: a `BluetoothError`
+* **Writes trigger reconnects.** Every command goes through
+  `CasambiHub.async_command(method, ...)`: a `BluetoothError`
   (or `ConnectionStateError`) during a write with the library no longer reporting itself connected
   means it gave the link up without running its disconnect callbacks, so
   the entities are told the link is down and a reconnect is scheduled,
@@ -76,8 +108,8 @@ operation, not an error.
   upstream the error is re-raised, so the failed command is still
   reported to the caller as a `HomeAssistantError` rather than silently
   doing nothing.
-* **Entities follow the connection.** `CasambiApi` fans out connection
-  state changes to entities (`register_connection_updates`), so the
+* **Entities follow the connection.** `CasambiHub` fans out connection
+  state changes to entities (`subscribe_connection`), so the
   **Status** binary sensor and every entity's availability update the
   moment the link drops or comes back. The reconnect is scheduled before
   the entities are told, and each callback, connection or unit, is guarded:
@@ -88,7 +120,7 @@ operation, not an error.
   adapter or proxy in range sees it*, or the Bluetooth error); a second
   warning reports when the network is reachable again. Shorter failures
   stay at debug level.
-* **Unloading wins.** `disconnect()` sets `_closing`, cancels a running
+* **Unloading wins.** `async_disconnect()` sets `_closing`, cancels a running
   reconnect task and waits up to 5 s for it; nothing schedules a reconnect
   afterwards, not even a write failing during the teardown. It only runs
   once the platforms unloaded: entities that stay up keep their link.
@@ -108,7 +140,7 @@ operation, not an error.
   after a drop the old client kept its BlueZ session (or proxy slot) and
   the next key exchange could stall on it (casambi-bt #76). Each attempt
   first disconnects a client still there that reads as not connected
-  (`_release_stale_link`, through the library's private `_casaClient` /
+  (`async_release_stale_client` in `library.py`, through the library's private `_casaClient` /
   `_gattClient`, checked by `tests/test_lib_compat.py`), best effort and
   bounded by `STALE_LINK_RELEASE_TIMEOUT` (10 s).
 
@@ -125,18 +157,18 @@ of operations.
    and only sets it to `NONE` afterwards. Reading `casa.connected` inside
    the callback therefore returns `True`: the Status sensor was written
    *on* and never refreshed, while every unit entity was unavailable.
-   `CasambiApi` now tracks the link itself (`_link_up`): down in the
+   `CasambiHub` now tracks the link itself (`_link_up`): down in the
    disconnect callback, up after a successful connect or reconnect, and
    `available` is `_link_up and casa.connected`.
 2. **The reconnect task starts inside that callback.** Home Assistant
-   starts background tasks eagerly, so `reconnect()` ran synchronously
+   starts background tasks eagerly, so the reconnect task ran synchronously
    from the callback, still before the library switched to `NONE`.
    `Casambi.reconnect()` begins with `if self.connected: return`, so it
    returned at once without connecting, and the loop took that for
    success and stopped. The units then stayed unavailable for hours even
    after the proxy was back: the advertisement callback did not wake us,
    presumably because Home Assistant skips advertisements whose content
-   did not change. `reconnect()` now yields once (`asyncio.sleep(0)`)
+   did not change. `_reconnect()` now yields once (`asyncio.sleep(0)`)
    before its first attempt, and a reconnect that returns while
    `casa.connected` is still false counts as a failed attempt.
 
@@ -207,7 +239,7 @@ in that mode stays a light.
 
 The SO! screen's dimmer counts how far the screen is *extended*: raw 0 is
 fully retracted (open), raw 255 fully extended (closed) — the opposite of
-Home Assistant's cover position, where 100 is open. `CasambiScreenCover`
+Home Assistant's cover position, where 100 is open. `CasambiMotorCover`
 inverts in both directions (`100 - dimmer * 100 / 255` on read,
 `(100 - position) * 255 / 100` on write), and the weather protection
 retracts a screen by writing raw 0.
@@ -283,18 +315,18 @@ The motor counts runs started by a position command too: after a SetLevel
 close the bit retracted the screen (capture 1), and after a SetSlider close
 it opened the louvres. While the bit is set the motor keeps reporting the
 position it last rested at, and after it clears it repeats that once before
-reporting where it stopped. `CasambiMotorCover` follows this to predict the
+reporting where it stopped. `MotorModel` follows this to predict the
 bit's direction (up from the closed end, down from the open end, otherwise
 opposite the last run) and drives open/close with the bit whenever that is
 the requested way, so stop can clear it like the button. Otherwise
-open/close send a position, and the subclass handles stop (aim ahead on
-screens, nothing on louvres). Open during a close (or the reverse) started
+open/close send a position, and the subclass handles stop (aim ahead, on
+screens and on louvres in a position move). Open during a close (or the reverse) started
 with the bit clears and sets it again, like pressing the button twice.
 
 The library applies the bit to the unit the moment Home Assistant writes
-it, so a run it starts is recorded then (`_bit_run_started`), and the
+it, so a run it starts is recorded then (`MotorModel.started`), and the
 motor's echoes (a clear with the stale rest when reversing, then the set
-bit) are not read as a rest or a new run. The cover keeps the bit values
+bit) are not read as a rest or a new run. The model keeps the bit values
 still to be echoed, in order (`_echoes`), for at most `BIT_ECHO_SECONDS`:
 a push with the next expected bit consumes it, one with another bit is a
 state the motor sent before it got the write, and once every write was
@@ -312,11 +344,11 @@ when it lies behind.
 So the toggle reverses, and the vendor app has no working stop either. A
 position sent while the screen moves is honoured only when it lies ahead
 of it: 52 at 7.1 s was just behind the screen and ignored, 65 at 8.8 s was
-ahead and stopped it. The cover follows that too: a target reported
-behind the estimate (within `BEHIND_MARGIN`, 0.5 raw) while a position
+ahead and stopped it. The model follows that too: a target reported
+behind the estimate (within `SCREEN_BEHIND_MARGIN`, 0.5 raw) while a position
 move runs is ignored, and so are its repeats once the screen rests at the
 end it was heading for, until another target is taken or Home Assistant
-sends a position. `CasambiScreenCover` therefore stops by sending the
+sends a position. `ScreenModel` therefore stops by sending the
 estimated position 1.5 s ahead in the direction of travel (rounded further
 along), and sends nothing at rest or within that margin of the target. When
 the bit is set — a run started by the wall button or the app — it clears
@@ -351,14 +383,14 @@ jumps to the end the run heads for. A run stopped on the way repeats that
 end with the bit clear, then reports where the louvres stopped about 2 s
 later (13:28:42.5 stop, 13:28:44.5 raw 118 after 10.3 s from closed); a
 run left to finish has the bit cleared by the motor at the end (21.9 s
-for a full close on the wall button). `CasambiLouvreCover` therefore
+for a full close on the wall button). `LouvreModel` therefore
 shows an estimate from `LOUVRE_TRAVEL_SECONDS` (22 s for 0–255, both
 ways), with opening/closing, while they move: from the bit run's start
 (the direction the model predicts), from a slider change at rest, or from
 a run Home Assistant starts. After a stop it holds the estimate for up to
 `LOUVRE_STOP_REPORT_SECONDS` (5 s) until the motor reports, unless the
-run was within `LOUVRE_END_MARGIN` of its end. `_note_direction` returns
-what each push was (`MotorStep`) for this. The reported slider stays what
+run was within `LOUVRE_END_MARGIN` of its end. `_follow_bit` returns
+what each push was (`Step`) for this. The reported slider stays what
 the weather protection, the frost lock and sun tracking work on. A long
 press on the wall button does nothing to the louvres.
 
@@ -527,8 +559,8 @@ reimplements in Home Assistant for the Cosy pack. Decoded by
 
 Nothing here is implemented: the Cosy pack ships the Lamel Standard, whose
 5-byte state has `$pos` at bits 28–35 and `$startstop` at bit 36 and no
-native automation at all — hence `suntrack.py` and the automation entities
-in `switch.py`. The map is recorded because a unit that turns out to have
+native automation at all — hence `suntrack.py`, `sun_tracking.py` and
+`pergola.py`. The map is recorded because a unit that turns out to have
 a 7-byte state is a Star, and then these controls should be exposed
 directly instead of driving it from Home Assistant. Its sensor-header
 mapping (which header carries the internal temperature) is an informed
@@ -555,7 +587,8 @@ solar position (via Home Assistant's astral location — the same engine as
 The pergola's compass orientation is set in the integration options
 (default 180° = south). A deadband of ~3° avoids constant motor
 adjustments; nothing moves when the sun is down or behind the pergola.
-The math lives in `suntrack.py`, the scheduler in `switch.py`.
+The math lives in `suntrack.py`, the scheduler in `sun_tracking.py`
+(`SunTracker`, one per louvre).
 
 **Temperature control**: the per-louvre *Temperature control* switch and
 *Temperature setpoint* number bias the sun tracking by
@@ -575,14 +608,14 @@ other numeric state above 0; unavailable/unknown/non-numeric keep the last
 reading); wind at or above the configured threshold
 (default 35 km/h) retracts all screens, closes all louvres and pauses sun
 tracking, latched with 80% hysteresis. A screen is retracted through its
-cover (`register_retract_handler`): position 0 at rest, but one already
+motor (`Motor.async_secure`, planned by `ScreenModel.secure`): position 0 at rest, but one already
 moving would ignore a position behind it, so a gust during a close
 reverses it with the bit, as *open* does; screens are never re-extended
 automatically. Wind is the higher of the sensor platform (packet 1, km/h)
 and the wind entity (`entity_wind_kmh`, converted from its unit with
 `SpeedConverter`; no unit means km/h). It acts on the transitions when
 rain or wind starts, and then holds as a lock until they stop, exactly
-like the frost lock: `CasambiApi.weather_lock(unit)` returns `"wind"`
+like the frost lock: `PergolaController.weather_lock(unit)` returns `"wind"`
 (louvres and screens) or `"rain"` (louvres only) while the latch is set,
 and `CasambiMotorCover._check_weather_lock(raw_target)` raises
 `ServiceValidationError` (`weather_lock_wind` / `weather_lock_rain`) on
@@ -591,28 +624,27 @@ current raw position (raw 0 is the safe end of both motors: louvres
 closed, screen retracted); a target of raw 0 is always allowed, even
 before the position is known. The covers expose the lock as the
 `weather_lock` and `weather_lock_value` attributes and are refreshed by
-`notify_weather_lock()` whenever a latch changes: it only writes the
-covers' state (`register_lock_listener`). Replaying the units' callbacks
+`notify_lock()` whenever a latch changes: it only writes the
+covers' state (`add_lock_listener`). Replaying the units' callbacks
 instead fed their state from before an outage to the motion tracking and
 undid the reset the link drop had made. The wall button and the app are
-not blocked; instead the switch listens to the motors' state pushes
+not blocked; instead the protection watches the motors
 (`_motor_update`) and sends a motor that rests out of safety back, no
 more than once per `WEATHER_RESECURE_INTERVAL` (30 s) per motor, offline
 units aside; a motor that rests short of safety again (an obstacle, an
 overcurrent stop) is retried at doubling intervals up to 16 minutes, with
-one warning. Where it rests comes from the cover through
-`CasambiApi.register_rest_check`: None while the bit is set or, for a
+one warning. Where it rests comes from the motor's model
+(`Motor.rest_position`): None while the bit is set or, for a
 screen, while its motion estimate runs, because a screen ignores a
-position behind it while it moves (capture, below); then the cover's own
+position behind it while it moves (capture, below); then the model's own
 position, since a screen's reported target can be stale after a button
-run. A screen arrives on its estimate without a push, so its timer runs
-the late callbacks when the motion ends. The switch registers its watcher as a
-late unit callback (`register_unit_updates(..., late=True)`), so it runs
-after the covers have seen the same push: the platforms are set up
-concurrently, and a watcher that ran first saw a screen that had just
-started moving as at rest. Turning the switch off clears both latches
+run. A screen arrives on its estimate without a push, so the motor's timer
+calls the watchers when the motion ends. The protection is a watcher of
+each motor (`Motor.add_watcher`): watchers run once the model has taken a
+push in, so they never see a screen that has just started moving as at
+rest. Turning the switch off clears both latches
 and releases everything. A protective command that fails
-(`HomeAssistantError` from the proxy) is kept in `_pending` with the
+(`HomeAssistantError` from `async_command`) is kept in `_pending` with the
 reading it failed on, and sent again on a later reading, on the motor's
 next push once the interval has passed, or when the connection comes
 back, as long as the rain or wind it answers to is still active. While
@@ -621,11 +653,11 @@ the link is down nothing is sent: the command goes straight to
 past the integration's backoff.
 
 **Frost lock**: a per-louvre config switch (on by default, restored).
-`CasambiApi.frost_lock_temperature(unit)` returns the reading while the
+`PergolaController.frost_lock_temperature(unit)` returns the reading while the
 lock is on and the temperature entity reads below
 `frost_lock_temperature` (default 2 °C), keeping the last numeric reading
 when the entity can't tell. That reading is kept current by a state
-listener on the entity (`CasambiApi.track_temperature`), not only read at
+listener on the entity (set up in `PergolaController.async_start`), not only read at
 each command, so a source that read -3 °C overnight and then dropped still
 locks; the temperature control uses the same reading. The louvre cover then raises
 `ServiceValidationError` (`frost_lock`) on open and on any position above
@@ -698,8 +730,8 @@ further:
   `get_astral_location` (removed in 2027.7) — `suntrack.py` uses whichever
   exists.
 - Devices link to their parent with `via_device_id` instead of the
-  `via_device` identifier tuple (removed in 2027.8) — `entities.py` passes the
-  network device's registry id, recorded on `CasambiApi.network_device_id`
+  `via_device` identifier tuple (removed in 2027.8) — `entity.py` passes the
+  network device's registry id, recorded on `CasambiHub.network_device_id`
   when the device is created in `async_setup_entry`, on cores whose
   `DeviceInfo` accepts it.
 

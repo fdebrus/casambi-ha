@@ -22,8 +22,8 @@ rules:
   common-modules:
     status: done
     comment: |
-      The entity bases live in entities.py; there is no coordinator (see
-      appropriate-polling).
+      The entity bases live in entity.py and the connection in hub.py;
+      there is no coordinator (see appropriate-polling).
   config-flow: done
   config-flow-test-coverage: done
   dependency-transparency: done

@@ -17,12 +17,12 @@ from CasambiBt import (
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.casambi_bt import CasambiApi
 from custom_components.casambi_bt.const import (
     CONF_IMPORT_GROUPS,
     CONF_VERTICAL_AS_COVER,
     DOMAIN,
 )
+from custom_components.casambi_bt.hub import CasambiHub
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
@@ -366,7 +366,7 @@ def mock_casambi() -> Generator[MagicMock]:
     casa.scenes = [Scene(1, "Evening")]
 
     with (
-        patch("custom_components.casambi_bt.Casambi", return_value=casa),
+        patch("custom_components.casambi_bt.hub.Casambi", return_value=casa),
         patch("custom_components.casambi_bt.config_flow.Casambi", return_value=casa),
     ):
         yield casa
@@ -411,17 +411,17 @@ def mock_bluetooth() -> Generator[MagicMock]:
         yield device
 
 
-async def setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> CasambiApi:
+async def setup_entry(hass: HomeAssistant, entry: MockConfigEntry) -> CasambiHub:
     """Add the entry to hass, set it up and return its api."""
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
-    api = cast("CasambiApi", entry.runtime_data)
+    api = cast("CasambiHub", entry.runtime_data.hub)
     # The sensor platform reports its readings right after connecting.
     for unit in api.get_units():
         if unit.uuid == SENSOR_PLATFORM_UUID:
             push_platform(
-                api._unit_changed_handler,  # noqa: SLF001
+                api._handle_unit_changed,  # noqa: SLF001
                 unit,
                 **PLATFORM_DEFAULTS,
             )

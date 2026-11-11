@@ -16,7 +16,7 @@
 The rest of this page documents the fork for my own reference.
 
 > [!NOTE]
-> [`casambi-ng/`](casambi-ng/) holds a rewrite of this integration with the same behaviour and a cleaner structure. It is not what HACS installs; see its README to try it.
+> Version 1.0.0 is a rewrite of the integration with the same entities and the same behaviour (see [DEVELOPMENT.md](DEVELOPMENT.md#architecture)). Nothing needs to be reconfigured. If something misbehaves after the update, reinstall 0.31.0 from HACS and restart Home Assistant.
 
 ## Tested hardware
 

@@ -33,9 +33,9 @@ from CasambiBt._switch import ButtonEventType, SwitchEvent, SwitchEventDecoder
 import CasambiBt.errors as casambi_errors
 import pytest
 
-# Methods the integration awaits. They must stay coroutines: CasambiProxy
-# only wraps coroutine functions, so a method that became synchronous would
-# silently lose its reconnect-on-bluetooth-error handling.
+# Methods the integration awaits, most of them through the hub's
+# async_command. They must stay coroutines: one that became synchronous
+# would fail there on every command.
 COROUTINE_METHODS = (
     "connect",
     "disconnect",
@@ -114,8 +114,7 @@ def test_casambi_coroutine_methods(name: str) -> None:
     method = getattr(Casambi, name, None)
     assert method is not None, f"Casambi.{name} is gone from the library"
     assert inspect.iscoroutinefunction(method), (
-        f"Casambi.{name} is no longer a coroutine; CasambiProxy would stop "
-        "wrapping it and writes would no longer trigger a reconnect"
+        f"Casambi.{name} is no longer a coroutine; the hub awaits it in async_command"
     )
 
 

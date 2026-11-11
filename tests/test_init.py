@@ -255,7 +255,7 @@ async def test_unit_devices_link_to_network_device(
     entry_id = mock_config_entry.entry_id
     network_device = get_device(registry, (DOMAIN, NETWORK_ID), entry_id)
     assert network_device is not None
-    assert mock_config_entry.runtime_data.network_device_id == network_device.id
+    assert mock_config_entry.runtime_data.hub.network_device_id == network_device.id
 
     unit_device = get_device(registry, (DOMAIN, LIGHT_UUID), entry_id)
     assert unit_device is not None

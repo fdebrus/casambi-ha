@@ -10,7 +10,7 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.const import CONF_PASSWORD
 from homeassistant.core import HomeAssistant
 
-from . import CasambiConfigEntry
+from .models import CasambiConfigEntry
 
 TO_REDACT = {CONF_PASSWORD}
 
@@ -58,8 +58,9 @@ async def async_get_config_entry_diagnostics(
     hass: HomeAssistant, entry: CasambiConfigEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a config entry."""
-    api = entry.runtime_data
-    casa = api.casa
+    data = entry.runtime_data
+    hub, pergola = data.hub, data.pergola
+    casa = hub.casa
 
     return {
         "entry": {
@@ -70,18 +71,43 @@ async def async_get_config_entry_diagnostics(
             "id": casa.networkId,
             "name": casa.networkName,
             "connected": casa.connected,
-            "available": api.available,
+            "available": hub.available,
         },
         # The state of the pergola automation, keyed by louvre uuid where
         # it is per unit.
         "automation": {
-            "rain_active": api.rain_active,
-            "wind_active": api.wind_active,
-            "last_temperature": api.last_temperature,
-            "sun_offsets": dict(api.sun_offsets),
-            "temp_control": dict(api.temp_control),
-            "temp_setpoints": dict(api.temp_setpoints),
-            "frost_lock": dict(api.frost_lock),
+            "rain_active": pergola.rain_active,
+            "wind_active": pergola.wind_active,
+            "wind_kmh": pergola.wind_kmh,
+            "last_temperature": pergola.last_temperature,
+            "sun_tracking": {
+                uuid: tracker.enabled for uuid, tracker in pergola.trackers.items()
+            },
+            "sun_offsets": {
+                uuid: settings.sun_offset for uuid, settings in pergola.settings.items()
+            },
+            "temp_control": {
+                uuid: settings.temp_control
+                for uuid, settings in pergola.settings.items()
+            },
+            "temp_setpoints": {
+                uuid: settings.temp_setpoint
+                for uuid, settings in pergola.settings.items()
+            },
+            "frost_lock": {
+                uuid: settings.frost_lock for uuid, settings in pergola.settings.items()
+            },
+        },
+        # What each motor's model makes of its unit, in raw positions.
+        "motors": {
+            uuid: {
+                "kind": motor.kind.name,
+                "position": motor.position,
+                "rest_position": motor.rest_position,
+                "reported": motor.reported,
+                "travel": motor.travel,
+            }
+            for uuid, motor in data.motors.items()
         },
         "units": [
             {
@@ -103,7 +129,7 @@ async def async_get_config_entry_diagnostics(
                 ],
                 "state": _state_details(unit.state),
                 "sensor_cache": dict(unit.sensor_cache),
-                "platform_readings": api.platform_readings(unit),
+                "platform_readings": hub.platform_readings(unit),
             }
             for unit in casa.units
         ],
