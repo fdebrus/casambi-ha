@@ -76,7 +76,7 @@ class _Rig:
 
 def _patched_clock(clock: list[float]):  # type: ignore[no-untyped-def]
     return patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     )
 
 

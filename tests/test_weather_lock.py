@@ -21,6 +21,7 @@ from homeassistant.components.cover import (
 from homeassistant.const import ATTR_ENTITY_ID
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .conftest import (
@@ -77,7 +78,7 @@ async def test_wind_locks_the_louvres(
     await _setup(hass, mock_config_entry)
     await _enable(hass, mock_casambi)
     louvre_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
-    assert mock_config_entry.runtime_data.wind_active
+    assert mock_config_entry.runtime_data.pergola.wind_active
 
     attributes = hass.states.get(louvre_id).attributes
     assert attributes["weather_lock"] == "wind"
@@ -194,11 +195,11 @@ async def test_a_motor_moved_elsewhere_is_sent_back(
     clock = [1000.0]
     with (
         patch(
-            "custom_components.casambi_bt.cover.monotonic",
+            "custom_components.casambi_bt.motor.monotonic",
             side_effect=lambda: clock[0],
         ),
         patch(
-            "custom_components.casambi_bt.switch.monotonic",
+            "custom_components.casambi_bt.weather.monotonic",
             side_effect=lambda: clock[0],
         ),
     ):
@@ -263,7 +264,6 @@ async def test_the_lock_is_released_by_the_hysteresis_and_the_switch(
     """Test that a lull below 80 % of the threshold, or the switch, unlocks."""
     await _setup(hass, mock_config_entry)
     await _enable(hass, mock_casambi)
-    api = mock_config_entry.runtime_data
     louvre_id = _entity_id(hass, COVER_DOMAIN, LOUVRE_COVER_ID)
     screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
 
@@ -275,7 +275,7 @@ async def test_the_lock_is_released_by_the_hysteresis_and_the_switch(
 
     _weather(hass, mock_casambi, wind=25)
     await hass.async_block_till_done()
-    assert api.wind_active is False
+    assert mock_config_entry.runtime_data.pergola.wind_active is False
     assert hass.states.get(louvre_id).attributes["weather_lock"] is None
     assert hass.states.get(screen_id).attributes["weather_lock"] is None
     await _call(hass, SERVICE_OPEN_COVER, louvre_id)
@@ -312,7 +312,7 @@ async def test_a_failed_command_is_retried_on_the_next_motor_push(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.switch.monotonic",
+        "custom_components.casambi_bt.weather.monotonic",
         side_effect=lambda: clock[0],
     ):
         await _setup(hass, mock_config_entry)
@@ -345,13 +345,13 @@ async def test_nothing_is_sent_while_the_link_is_down(
     network is back.
     """
     await _setup(hass, mock_config_entry)
-    api = mock_config_entry.runtime_data
+    api = mock_config_entry.runtime_data.hub
     # Calm, so that enabling sends nothing.
     _weather(hass, mock_casambi, wind=10)
     await _enable(hass, mock_casambi)
 
     mock_casambi.connected = False
-    api._notify_connection_state()  # noqa: SLF001
+    api._notify_connection()  # noqa: SLF001
     await hass.async_block_till_done()
     _weather(hass, mock_casambi, wind=40)
     await hass.async_block_till_done()
@@ -359,7 +359,7 @@ async def test_nothing_is_sent_while_the_link_is_down(
     mock_casambi.setSlider.assert_not_awaited()
 
     mock_casambi.connected = True
-    api._notify_connection_state()  # noqa: SLF001
+    api._notify_connection()  # noqa: SLF001
     await hass.async_block_till_done()
     mock_casambi.setLevel.assert_awaited_once()
     mock_casambi.setSlider.assert_awaited_once()
@@ -399,10 +399,10 @@ async def test_a_lock_change_during_an_outage_leaves_the_motion_alone(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
-        api = mock_config_entry.runtime_data
+        api = mock_config_entry.runtime_data.hub
         screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
         handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
         screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
@@ -413,7 +413,7 @@ async def test_a_lock_change_during_an_outage_leaves_the_motion_alone(
         handler(screen)
         clock[0] += 100
         mock_casambi.connected = False
-        api._notify_connection_state()  # noqa: SLF001
+        api._notify_connection()  # noqa: SLF001
         await hass.async_block_till_done()
 
         # The wind rises while the link is down.
@@ -421,7 +421,7 @@ async def test_a_lock_change_during_an_outage_leaves_the_motion_alone(
         await hass.async_block_till_done()
 
         mock_casambi.connected = True
-        api._notify_connection_state()  # noqa: SLF001
+        api._notify_connection()  # noqa: SLF001
         screen.setStateFromBytes(bytes.fromhex("818b08800c"))
         handler(screen)
         await hass.async_block_till_done()
@@ -444,11 +444,11 @@ async def test_a_screen_arriving_on_its_estimate_is_sent_back(
     clock = [1000.0]
     with (
         patch(
-            "custom_components.casambi_bt.cover.monotonic",
+            "custom_components.casambi_bt.motor.monotonic",
             side_effect=lambda: clock[0],
         ),
         patch(
-            "custom_components.casambi_bt.switch.monotonic",
+            "custom_components.casambi_bt.weather.monotonic",
             side_effect=lambda: clock[0],
         ),
     ):
@@ -486,7 +486,7 @@ async def test_a_louvre_that_stays_short_of_closed_is_retried_less_often(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.switch.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.weather.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
         louvre = unit_by_uuid(mock_casambi, WINSOL_LOUVRE_UUID)
@@ -520,13 +520,12 @@ async def test_a_storm_above_63_kmh_keeps_the_lock(
     """
     await _setup(hass, mock_config_entry)
     await _enable(hass, mock_casambi)
-    api = mock_config_entry.runtime_data
     screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
 
     _weather(hass, mock_casambi, wind=70)
     await hass.async_block_till_done()
 
-    assert api.wind_active is True
+    assert mock_config_entry.runtime_data.pergola.wind_active is True
     assert hass.states.get(screen_id).attributes["weather_lock_value"] == 70.0
     wind_id = _entity_id(
         hass, "sensor", f"{NETWORK_ID}-unit-{SENSOR_PLATFORM_UUID}-wind"
@@ -549,11 +548,11 @@ async def test_a_gust_during_a_close_reverses_the_screen(
     clock = [1000.0]
     with (
         patch(
-            "custom_components.casambi_bt.cover.monotonic",
+            "custom_components.casambi_bt.motor.monotonic",
             side_effect=lambda: clock[0],
         ),
         patch(
-            "custom_components.casambi_bt.switch.monotonic",
+            "custom_components.casambi_bt.weather.monotonic",
             side_effect=lambda: clock[0],
         ),
     ):
@@ -602,3 +601,58 @@ async def test_a_gust_retracts_a_resting_screen_with_a_position(
     mock_casambi.setControlValue.assert_not_awaited()
     mock_casambi.setLevel.assert_awaited_once()
     assert mock_casambi.setLevel.await_args.args[1] == 0
+
+
+async def test_a_motor_is_secured_without_its_cover_entity(
+    hass: HomeAssistant,
+    mock_casambi: MagicMock,
+    mock_bluetooth: MagicMock,
+    mock_config_entry: MockConfigEntry,
+) -> None:
+    """Test the weather protection on a screen whose cover is disabled.
+
+    The motor and its model exist whether or not the cover entity does,
+    so a screen extending when the wind rises is still reversed with the
+    start/stop bit.
+    """
+    clock = [1000.0]
+    with (
+        patch(
+            "custom_components.casambi_bt.motor.monotonic",
+            side_effect=lambda: clock[0],
+        ),
+        patch(
+            "custom_components.casambi_bt.weather.monotonic",
+            side_effect=lambda: clock[0],
+        ),
+    ):
+        await _setup(hass, mock_config_entry)
+        screen_id = _entity_id(hass, COVER_DOMAIN, SCREEN_COVER_ID)
+        assert hass.states.get(screen_id) is not None
+        er.async_get(hass).async_update_entity(
+            screen_id, disabled_by=er.RegistryEntryDisabler.USER
+        )
+        await hass.config_entries.async_reload(mock_config_entry.entry_id)
+        await hass.async_block_till_done()
+        assert hass.states.get(screen_id) is None
+
+        _weather(hass, mock_casambi, wind=10)
+        await _enable(hass, mock_casambi)
+        screen = unit_by_uuid(mock_casambi, WINSOL_SCREEN_UUID)
+        handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
+        screen.setStateFromBytes(bytes.fromhex("818b080000"))
+        handler(screen)
+        clock[0] = 1100.0
+        screen.setStateFromBytes(bytes.fromhex("818b08f00f"))
+        handler(screen)
+        clock[0] += 5
+        mock_casambi.setControlValue.reset_mock()
+
+        _weather(hass, mock_casambi, wind=50)
+        await hass.async_block_till_done()
+
+        assert [
+            (call.args[1].offset, call.args[2])
+            for call in mock_casambi.setControlValue.await_args_list
+        ] == [(36, 1)]
+        mock_casambi.setLevel.assert_not_awaited()

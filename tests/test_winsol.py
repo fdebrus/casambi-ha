@@ -457,7 +457,7 @@ async def test_screen_shows_estimated_position_while_moving(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
         entity_id = _entity_id(
@@ -527,7 +527,7 @@ async def test_screen_button_run(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
         entity_id = _entity_id(
@@ -602,7 +602,7 @@ async def test_screen_open_close_like_wall_button(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
         entity_id = _entity_id(
@@ -789,7 +789,7 @@ async def test_louvres_run_of_unknown_direction_is_stopped_then_sent(
     Assistant never saw. The run is stopped and the end sent as a position.
     """
     await _setup(hass, mock_config_entry)
-    api = mock_config_entry.runtime_data
+    api = mock_config_entry.runtime_data.hub
     entity_id = _entity_id(
         hass,
         COVER_DOMAIN,
@@ -799,10 +799,10 @@ async def test_louvres_run_of_unknown_direction_is_stopped_then_sent(
     handler = mock_casambi.registerUnitChangedHandler.call_args.args[0]
 
     mock_casambi.connected = False
-    api._notify_connection_state()  # noqa: SLF001
+    api._notify_connection()  # noqa: SLF001
     await hass.async_block_till_done()
     mock_casambi.connected = True
-    api._notify_connection_state()  # noqa: SLF001
+    api._notify_connection()  # noqa: SLF001
     # Back in the middle of a run (bit 36 set) from slider 103.
     louvre.setStateFromBytes(bytes.fromhex("4101007016"))
     handler(louvre)
@@ -829,7 +829,7 @@ async def test_louvres_forget_the_direction_when_the_link_drops(
     and close fall back to a position until a run is seen again.
     """
     await _setup(hass, mock_config_entry)
-    api = mock_config_entry.runtime_data
+    api = mock_config_entry.runtime_data.hub
     entity_id = _entity_id(
         hass,
         COVER_DOMAIN,
@@ -855,11 +855,11 @@ async def test_louvres_forget_the_direction_when_the_link_drops(
     await report("4101007006")
 
     mock_casambi.connected = False
-    api._notify_connection_state()  # noqa: SLF001
+    api._notify_connection()  # noqa: SLF001
     await hass.async_block_till_done()
     assert hass.states.get(entity_id).state == "unavailable"
     mock_casambi.connected = True
-    api._notify_connection_state()  # noqa: SLF001
+    api._notify_connection()  # noqa: SLF001
     await report("4101007006")
 
     # Open would have used the bit before the drop; now it sends a position.
@@ -883,7 +883,7 @@ async def test_screen_open_reverses_a_position_move(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
         entity_id = _entity_id(
@@ -977,7 +977,7 @@ async def test_screen_stop_aims_ahead(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
         entity_id = _entity_id(
@@ -1157,26 +1157,6 @@ async def test_sensor_entities_available_while_unit_offline(
         assert state.state != "unavailable", f"{domain}.{key} is unavailable"
 
 
-async def test_screen_travel_time_per_direction(
-    hass: HomeAssistant,
-    mock_casambi: MagicMock,
-    mock_bluetooth: MagicMock,
-    mock_config_entry: MockConfigEntry,
-) -> None:
-    """Test that extending uses Time Down and retracting uses Time Up."""
-    await _setup(hass, mock_config_entry)
-    entity_id = _entity_id(
-        hass, COVER_DOMAIN, f"{NETWORK_ID}-unit-{WINSOL_SCREEN_UUID}-cover"
-    )
-    entity = hass.data["entity_components"][COVER_DOMAIN].get_entity(entity_id)
-    assert entity is not None
-
-    # Channel 1 is the fixture's "Time Up", channel 2 its "Time Down".
-    entity._travel_ms = {1: 40000, 2: 20000}  # noqa: SLF001
-    assert entity._travel_seconds(extending=True) == 20.0  # noqa: SLF001
-    assert entity._travel_seconds(extending=False) == 40.0  # noqa: SLF001
-
-
 async def test_screen_forgets_motion_when_the_link_drops(
     hass: HomeAssistant,
     mock_casambi: MagicMock,
@@ -1186,10 +1166,10 @@ async def test_screen_forgets_motion_when_the_link_drops(
     """Test that a reconnect does not animate a move from a stale target."""
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
-        api = mock_config_entry.runtime_data
+        api = mock_config_entry.runtime_data.hub
         entity_id = _entity_id(
             hass,
             COVER_DOMAIN,
@@ -1213,7 +1193,7 @@ async def test_screen_forgets_motion_when_the_link_drops(
         assert hass.states.get(entity_id).state == "closing"
         clock[0] += 5
         mock_casambi.connected = False
-        api._notify_connection_state()  # noqa: SLF001
+        api._notify_connection()  # noqa: SLF001
         await hass.async_block_till_done()
         assert hass.states.get(entity_id).state == "unavailable"
 
@@ -1221,7 +1201,7 @@ async def test_screen_forgets_motion_when_the_link_drops(
         # the retracted end. That is taken as rest, not as a 35 s opening.
         clock[0] += 600
         mock_casambi.connected = True
-        api._notify_connection_state()  # noqa: SLF001
+        api._notify_connection()  # noqa: SLF001
         await report("818b080000")
         state = hass.states.get(entity_id)
         assert state.state == "open"
@@ -1241,7 +1221,7 @@ async def test_screen_button_stop_keeps_the_run_direction(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
         entity_id = _entity_id(
@@ -1297,10 +1277,10 @@ async def test_screen_button_run_across_a_link_drop(
     """
     clock = [1000.0]
     with patch(
-        "custom_components.casambi_bt.cover.monotonic", side_effect=lambda: clock[0]
+        "custom_components.casambi_bt.motor.monotonic", side_effect=lambda: clock[0]
     ):
         await _setup(hass, mock_config_entry)
-        api = mock_config_entry.runtime_data
+        api = mock_config_entry.runtime_data.hub
         entity_id = _entity_id(
             hass,
             COVER_DOMAIN,
@@ -1320,13 +1300,13 @@ async def test_screen_button_run_across_a_link_drop(
         assert hass.states.get(entity_id).state == "closing"
         clock[0] += 5
         mock_casambi.connected = False
-        api._notify_connection_state()  # noqa: SLF001
+        api._notify_connection()  # noqa: SLF001
         await hass.async_block_till_done()
 
         # Back ten minutes later, in the middle of another button run.
         clock[0] += 600
         mock_casambi.connected = True
-        api._notify_connection_state()  # noqa: SLF001
+        api._notify_connection()  # noqa: SLF001
         await report("828b080010")
         assert hass.states.get(entity_id).state == "open"
 

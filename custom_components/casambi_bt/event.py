@@ -1,4 +1,4 @@
-"""Support for Casambi wall switch button events."""
+"""Events: the buttons of Casambi wall switches."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from CasambiBt._switch import SwitchEvent
 from homeassistant.components.event import EventDeviceClass, EventEntity
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import CasambiApi, CasambiConfigEntry
-from .entities import network_device_info, unit_device_info
+from .entity import CasambiEntity, network_device_info, unit_device_info
+from .hub import CasambiHub
+from .models import CasambiConfigEntry
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,39 +25,36 @@ EVENT_TYPES = ["press", "release", "hold", "release_after_hold", "unknown"]
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    config_entry: CasambiConfigEntry,
+    entry: CasambiConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Create the Casambi button event entities.
+    """Create the button event entities.
 
     Which buttons exist can't be read from the network, so entities are
-    created dynamically when a button is used for the first time and
-    recreated from the entity registry on later starts.
+    created when a button is used for the first time and recreated from
+    the entity registry on later starts.
     """
-    casa_api = config_entry.runtime_data
+    hub = entry.runtime_data.hub
     entities: dict[tuple[int, int], CasambiButtonEventEntity] = {}
 
     def _add_button(
         unit_id: int, button: int, pending: SwitchEvent | None = None
-    ) -> CasambiButtonEventEntity:
-        entity = CasambiButtonEventEntity(casa_api, unit_id, button)
-        if pending is not None:
-            # Must be set before adding: the add may run eagerly and process
-            # async_added_to_hass immediately.
-            entity.set_pending(pending)
+    ) -> None:
+        # The pending event is set before adding: the add may run eagerly
+        # and process async_added_to_hass at once.
+        entity = CasambiButtonEventEntity(hub, unit_id, button, pending)
         entities[(unit_id, button)] = entity
         async_add_entities([entity])
-        return entity
 
-    # Recreate entities that were discovered in earlier sessions.
+    # Recreate the entities discovered in earlier sessions.
     registry = er.async_get(hass)
-    prefix = f"{casa_api.casa.networkId}-switch-"
-    for entry in er.async_entries_for_config_entry(registry, config_entry.entry_id):
-        if entry.domain != "event" or not entry.unique_id.startswith(prefix):
+    prefix = f"{hub.network_id}-switch-"
+    for known in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if known.domain != "event" or not known.unique_id.startswith(prefix):
             continue
         try:
             unit_id, button = (
-                int(part) for part in entry.unique_id.removeprefix(prefix).split("-")
+                int(part) for part in known.unique_id.removeprefix(prefix).split("-")
             )
         except ValueError:
             continue
@@ -65,7 +62,7 @@ async def async_setup_entry(
             _add_button(unit_id, button)
 
     @callback
-    def _handle_switch_event(event: SwitchEvent) -> None:
+    def _handle_button_event(event: SwitchEvent) -> None:
         key = (event.unit_id, event.button)
         if key not in entities:
             _LOGGER.debug(
@@ -77,71 +74,57 @@ async def async_setup_entry(
             return
         entities[key].handle_event(event)
 
-    casa_api.register_switch_events(_handle_switch_event)
-    config_entry.async_on_unload(
-        lambda: casa_api.unregister_switch_events(_handle_switch_event)
-    )
+    entry.async_on_unload(hub.subscribe_buttons(_handle_button_event))
 
 
-class CasambiButtonEventEntity(EventEntity):
-    """Event entity for a single button of a Casambi wall switch."""
+class CasambiButtonEventEntity(CasambiEntity, EventEntity):
+    """One button of a Casambi wall switch."""
 
-    _attr_has_entity_name = True
-    _attr_should_poll = False
     _attr_device_class = EventDeviceClass.BUTTON
     _attr_event_types = EVENT_TYPES
     _attr_translation_key = "button"
 
-    def __init__(self, api: CasambiApi, unit_id: int, button: int) -> None:
-        """Initialize the button event entity."""
-        self._api = api
-        self._unit_id = unit_id
-        self._button = button
-        self._pending: SwitchEvent | None = None
+    def __init__(
+        self,
+        hub: CasambiHub,
+        unit_id: int,
+        button: int,
+        pending: SwitchEvent | None = None,
+    ) -> None:
+        """Initialize the event entity of a button.
+
+        :param pending: The event that made the button known, to show once
+            the entity is added.
+        """
+        super().__init__(hub)
+        self._pending = pending
         # False while Home Assistant has not added the entity: it refuses
         # one disabled in the registry, which then must not write state.
         self._added = False
-
-        self._attr_unique_id = f"{api.casa.networkId}-switch-{unit_id}-{button}"
+        self._attr_unique_id = f"{hub.network_id}-switch-{unit_id}-{button}"
         self._attr_translation_placeholders = {"button": str(button)}
-
-    @property
-    def device_info(self) -> DeviceInfo:
-        """Return the device of the switch unit if known, else the network."""
-        for unit in self._api.get_units():
-            if unit.deviceId == self._unit_id:
-                return unit_device_info(self._api, unit)
-        return network_device_info(self._api)
-
-    @property
-    def available(self) -> bool:
-        """Return True if the network is connected."""
-        return self._api.available
-
-    def set_pending(self, event: SwitchEvent) -> None:
-        """Store the event that triggered the creation of this entity."""
-        self._pending = event
+        # The device of the switch unit if it is known, else the network.
+        unit = next((u for u in hub.get_units() if u.deviceId == unit_id), None)
+        self._attr_device_info = (
+            unit_device_info(hub, unit) if unit else network_device_info(hub)
+        )
 
     async def async_added_to_hass(self) -> None:
-        """Follow the connection and process the triggering event."""
+        """Show the event that made the button known."""
+        await super().async_added_to_hass()
         self._added = True
-        self._api.register_connection_updates(self._connection_callback)
         if self._pending is not None:
             self.handle_event(self._pending)
             self._pending = None
 
     async def async_will_remove_from_hass(self) -> None:
-        """Stop following the connection."""
+        """Stop showing events."""
         self._added = False
-        self._api.unregister_connection_updates(self._connection_callback)
-
-    @callback
-    def _connection_callback(self) -> None:
-        self.async_write_ha_state()
+        await super().async_will_remove_from_hass()
 
     @callback
     def handle_event(self, event: SwitchEvent) -> None:
-        """Handle a switch event for this button."""
+        """Show an event of this button."""
         if not self._added:
             return
         self._trigger_event(event.event.name.lower())
