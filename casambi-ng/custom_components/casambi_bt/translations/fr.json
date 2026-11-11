@@ -1,0 +1,166 @@
+{
+    "config": {
+        "abort": {
+            "already_configured": "L'appareil est déjà configuré",
+            "bluetooth_error": "Le Bluetooth ne semble pas fonctionner correctement.",
+            "not_supported": "Cet appareil n'est pas un réseau Casambi connectable.",
+            "reauth_successful": "La ré-authentification a réussi",
+            "reconfigure_successful": "La reconfiguration a réussi",
+            "wrong_network": "L'adresse ne correspond pas au réseau Casambi configuré."
+        },
+        "error": {
+            "cannot_connect": "Échec de la connexion",
+            "invalid_address": "L'adresse MAC Bluetooth du réseau n'est pas valide.",
+            "invalid_auth": "Authentification non valide",
+            "unknown": "Erreur inattendue"
+        },
+        "step": {
+            "reconfigure": {
+                "data": {
+                    "address": "Adresse MAC Bluetooth",
+                    "import_groups": "Importer les groupes",
+                    "password": "Mot de passe",
+                    "vertical_as_cover": "Exposer les contrôles verticaux comme volets (p. ex. lames de pergola)"
+                },
+                "title": "Reconfigurer votre réseau Casambi"
+            },
+            "reauth_confirm": {
+                "data": {
+                    "password": "Mot de passe"
+                },
+                "title": "Veuillez vérifier le mot de passe de votre réseau."
+            },
+            "network": {
+                "data": {
+                    "address": "Adresse MAC Bluetooth",
+                    "import_groups": "Importer les groupes",
+                    "password": "Mot de passe",
+                    "vertical_as_cover": "Exposer les contrôles verticaux comme volets (p. ex. lames de pergola)"
+                },
+                "title": "Configurer votre réseau Casambi",
+                "description": "L'adresse MAC Bluetooth (identifiant du réseau) se trouve dans les détails du luminaire dans l'application Casambi."
+            }
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Options Casambi",
+                "data": {
+                    "import_groups": "Importer les groupes",
+                    "vertical_as_cover": "Exposer les contrôles verticaux comme volets (p. ex. lames de pergola)",
+                    "louvre_azimuth": "Orientation de la pergola (azimut en degrés, 180 = sud)",
+                    "wind_threshold": "Seuil de vent pour rétracter les screens et fermer les lames (km/h)",
+                    "temperature_entity": "Capteur de température pour le contrôle de température et le verrou gel",
+                    "rain_entity": "Capteur de pluie pour la protection météo (capteur binaire, capteur de précipitations ou entité météo)",
+                    "wind_entity": "Capteur de vitesse du vent pour la protection météo",
+                    "frost_lock_temperature": "Verrou gel : refuser d'ouvrir les lames sous cette température (°C)"
+                }
+            }
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "motion": {
+                "name": "Mouvement"
+            },
+            "presence": {
+                "name": "Présence"
+            },
+            "rain": {
+                "name": "Pluie"
+            },
+            "status": {
+                "name": "État"
+            }
+        },
+        "event": {
+            "button": {
+                "name": "Bouton {button}"
+            }
+        },
+        "number": {
+            "sun_offset": {
+                "name": "Décalage solaire"
+            },
+            "temp_setpoint": {
+                "name": "Température de consigne"
+            },
+            "vertical": {
+                "name": "Vertical"
+            }
+        },
+        "sensor": {
+            "illuminance": {
+                "name": "Éclairement"
+            },
+            "louvre_channel": {
+                "name": "Canal capteur {channel}"
+            },
+            "louvre_module_state": {
+                "name": "État du module"
+            },
+            "louvre_overcurrent": {
+                "name": "Événements de surintensité"
+            },
+            "louvre_temperature": {
+                "name": "Température"
+            },
+            "louvre_travel_distance": {
+                "name": "Distance parcourue"
+            },
+            "solar": {
+                "name": "Rayonnement solaire"
+            },
+            "wind": {
+                "name": "Vitesse du vent"
+            }
+        },
+        "switch": {
+            "frost_lock": {
+                "name": "Verrou gel"
+            },
+            "light_sensor_enabled": {
+                "name": "Capteur de lumière activé"
+            },
+            "motion_sensor_enabled": {
+                "name": "Capteur de mouvement activé"
+            },
+            "rain_sensor_enabled": {
+                "name": "Capteur de pluie activé"
+            },
+            "sun_tracking": {
+                "name": "Suivi du soleil"
+            },
+            "temperature_control": {
+                "name": "Contrôle de température"
+            },
+            "weather_protection": {
+                "name": "Protection météo"
+            },
+            "wind_sensor_enabled": {
+                "name": "Capteur de vent activé"
+            }
+        }
+    },
+    "exceptions": {
+        "command_error": {
+            "message": "Impossible d'envoyer la commande au réseau Casambi."
+        },
+        "frost_lock": {
+            "message": "Les lames sont verrouillées contre le gel : il fait {temperature} °C, elles pourraient être collées à leurs joints. Vous pouvez toujours les fermer ou les arrêter, ou désactiver le verrou gel."
+        },
+        "weather_lock_wind": {
+            "message": "{name} est retenu par la protection météo : le vent est à {wind} km/h, la pergola reste sécurisée. Vous pouvez toujours fermer les lames, rétracter le screen ou arrêter, ou désactiver la protection météo."
+        },
+        "weather_lock_rain": {
+            "message": "{name} est retenu par la protection météo : il pleut, les lames restent fermées. Vous pouvez toujours les fermer ou les arrêter, ou désactiver la protection météo."
+        }
+    },
+    "issues": {
+        "unsupported_motor": {
+            "title": "Moteur non pris en charge : {name}",
+            "description": "**{name}** ({model}) est un moteur dont les contrôles ne correspondent pas aux lames Winsol Lamel Standard sur lesquelles cette intégration a été conçue et testée, par exemple un Winsol Lamel Intelligent (pack Star). Pour éviter de piloter le mauvais contrôle, aucune entité n'est créée pour lui.\n\nPilotez-le depuis l'application Casambi ou Winsol. Cet avertissement disparaît si l'unité est retirée du réseau."
+        }
+    }
+}

@@ -1,0 +1,166 @@
+{
+  "config": {
+    "step": {
+      "reconfigure": {
+        "title": "Reconfigure your Casambi network",
+        "data": {
+          "address": "Bluetooth MAC address",
+          "password": "[%key:common::config_flow::data::password%]",
+          "import_groups": "Import groups",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)"
+        }
+      },
+      "reauth_confirm": {
+        "data": {
+          "password": "Password"
+        },
+        "title": "Please verify your network password."
+      },
+      "network": {
+        "title": "Configure your Casambi network",
+        "data": {
+          "address": "Bluetooth MAC address",
+          "password": "[%key:common::config_flow::data::password%]",
+          "import_groups": "Import groups",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)"
+        },
+        "description": "Find the bluetooth MAC address (Network ID) in the luminaire details of your Casambi app."
+      }
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_address": "The bluetooth MAC address of the network is invalid.",
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
+      "bluetooth_error": "Bluetooth doesn't seem to work properly.",
+      "not_supported": "This device is not a connectable Casambi network.",
+      "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]",
+      "reconfigure_successful": "[%key:common::config_flow::abort::reconfigure_successful%]",
+      "wrong_network": "The address does not match the configured Casambi network."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Casambi options",
+        "data": {
+          "import_groups": "Import groups",
+          "vertical_as_cover": "Expose vertical controls as covers (e.g. pergola louvres)",
+          "louvre_azimuth": "Pergola orientation (azimuth in degrees, 180 = south)",
+          "wind_threshold": "Wind threshold for retracting screens and closing louvres (km/h)",
+          "temperature_entity": "Temperature sensor for temperature control and the frost lock",
+          "rain_entity": "Rain sensor for weather protection (binary sensor, precipitation sensor or weather entity)",
+          "wind_entity": "Wind speed sensor for weather protection",
+          "frost_lock_temperature": "Frost lock: refuse to open the louvres below this temperature (°C)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "motion": {
+        "name": "Motion"
+      },
+      "presence": {
+        "name": "Presence"
+      },
+      "rain": {
+        "name": "Rain"
+      },
+      "status": {
+        "name": "Status"
+      }
+    },
+    "event": {
+      "button": {
+        "name": "Button {button}"
+      }
+    },
+    "number": {
+      "sun_offset": {
+        "name": "Sun offset"
+      },
+      "temp_setpoint": {
+        "name": "Temperature setpoint"
+      },
+      "vertical": {
+        "name": "Vertical"
+      }
+    },
+    "sensor": {
+      "illuminance": {
+        "name": "Illuminance"
+      },
+      "louvre_channel": {
+        "name": "Sensor channel {channel}"
+      },
+      "louvre_module_state": {
+        "name": "Module state"
+      },
+      "louvre_overcurrent": {
+        "name": "Overcurrent events"
+      },
+      "louvre_temperature": {
+        "name": "Temperature"
+      },
+      "louvre_travel_distance": {
+        "name": "Travel distance"
+      },
+      "solar": {
+        "name": "Solar radiation"
+      },
+      "wind": {
+        "name": "Wind speed"
+      }
+    },
+    "switch": {
+      "frost_lock": {
+        "name": "Frost lock"
+      },
+      "light_sensor_enabled": {
+        "name": "Light sensor enabled"
+      },
+      "motion_sensor_enabled": {
+        "name": "Motion sensor enabled"
+      },
+      "rain_sensor_enabled": {
+        "name": "Rain sensor enabled"
+      },
+      "sun_tracking": {
+        "name": "Sun tracking"
+      },
+      "temperature_control": {
+        "name": "Temperature control"
+      },
+      "weather_protection": {
+        "name": "Weather protection"
+      },
+      "wind_sensor_enabled": {
+        "name": "Wind sensor enabled"
+      }
+    }
+  },
+  "exceptions": {
+    "command_error": {
+      "message": "Failed to send the command to the Casambi network."
+    },
+    "frost_lock": {
+      "message": "The louvres are locked against frost: it is {temperature} °C, so they may be frozen to their seals. You can still close or stop them, or turn off the frost lock."
+    },
+    "weather_lock_wind": {
+      "message": "{name} is held by the weather protection: the wind is at {wind} km/h, so it stays secured. You can still close the louvres, retract the screen or stop, or turn off the weather protection."
+    },
+    "weather_lock_rain": {
+      "message": "{name} is held by the weather protection: it is raining, so the louvres stay closed. You can still close or stop them, or turn off the weather protection."
+    }
+  },
+  "issues": {
+    "unsupported_motor": {
+      "title": "Unsupported motor: {name}",
+      "description": "**{name}** ({model}) is a motor whose controls do not match the Winsol Lamel Standard louvre this integration was built and tested on, for example a Winsol Lamel Intelligent (Star pack). To avoid driving the wrong control, no entities are created for it.\n\nControl it from the Casambi or Winsol app instead. This warning goes away if the unit is removed from the network."
+    }
+  }
+}
